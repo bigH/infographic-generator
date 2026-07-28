@@ -1,0 +1,122 @@
+{
+  "title": "Giant Pandas by the Numbers",
+  "subtitle": "Ten verified facts about Ailuropoda melanoleuca, the carnivore that lives on bamboo.",
+  "facts": [
+    {
+      "label": "Conservation status",
+      "value": "Vulnerable",
+      "detail": "The IUCN Red List downlisted the giant panda from Endangered to Vulnerable in its 11 April 2016 assessment under criteria C2a(i); D1, and now records the population trend as increasing.",
+      "source_title": "Ailuropoda melanoleuca (Giant Panda)",
+      "source_url": "https://www.iucnredlist.org/species/712/121745669"
+    },
+    {
+      "label": "Wild population",
+      "value": "1,864",
+      "detail": "China's Fourth National Giant Panda Survey (2011–2014, published 2015) estimated 1,864 wild pandas excluding dependent young under 1.5 years old; the IUCN counts only 500–1,000 of those as mature individuals, and China's National Forestry and Grassland Administration reported the wild population had reached around 1,900 by January 2024.",
+      "source_title": "Ailuropoda melanoleuca (Giant Panda)",
+      "source_url": "https://www.iucnredlist.org/species/712/121745669"
+    },
+    {
+      "label": "Daily bamboo intake",
+      "value": "26–84 lb (12–38 kg)",
+      "detail": "WWF puts a wild panda's daily haul at 26 to 84 pounds depending on which part of the bamboo plant it is eating, with shoots, leaves and stems differing sharply in bulk and nutrition.",
+      "source_title": "Giant Panda | WWF",
+      "source_url": "https://www.worldwildlife.org/species/giant-panda"
+    },
+    {
+      "label": "Share of diet that is bamboo",
+      "value": "~99%",
+      "detail": "Pandas will also take grasses, bulbs, fruit, insects, rodents and carrion, but roughly 99 percent of what they eat is bamboo.",
+      "source_title": "Giant Panda | San Diego Zoo Animals & Plants",
+      "source_url": "https://animals.sandiegozoo.org/animals/giant-panda"
+    },
+    {
+      "label": "Hours spent eating",
+      "value": "10–16 per day",
+      "detail": "Because a panda's carnivore-style gut extracts so little from bamboo, it must forage and eat for 10 to 16 hours a day and spends most of the remainder asleep.",
+      "source_title": "Giant panda | Smithsonian's National Zoo and Conservation Biology Institute",
+      "source_url": "https://nationalzoo.si.edu/animals/giant-panda"
+    },
+    {
+      "label": "Metabolic rate",
+      "value": "Sloth-level",
+      "detail": "The IUCN assessment notes that a panda's daily energy expenditure is comparable to that of a sloth or a reptile, helped by a mutation in its thyroid hormone pathway that down-regulates resting metabolism.",
+      "source_title": "Ailuropoda melanoleuca (Giant Panda)",
+      "source_url": "https://www.iucnredlist.org/species/712/121745669"
+    },
+    {
+      "label": "The pseudo-thumb",
+      "value": "A sixth digit",
+      "detail": "Pandas grip bamboo stalks using an elongated, enlarged wrist bone covered by a fleshy pad of skin that works alongside their five real digits.",
+      "source_title": "Giant panda | Smithsonian's National Zoo and Conservation Biology Institute",
+      "source_url": "https://nationalzoo.si.edu/animals/giant-panda"
+    },
+    {
+      "label": "Newborn cub size",
+      "value": "1/900th of its mother",
+      "detail": "A cub is born pink, blind and hairless at 3–5 ounces (85–142 g), roughly the size of a stick of butter and the smallest mammal newborn relative to its mother outside the marsupials.",
+      "source_title": "Giant panda | Smithsonian's National Zoo and Conservation Biology Institute",
+      "source_url": "https://nationalzoo.si.edu/animals/giant-panda"
+    },
+    {
+      "label": "Annual fertility window",
+      "value": "2–3 days",
+      "detail": "Females ovulate just once a year in spring, leaving a two- to three-day window in which conception is possible.",
+      "source_title": "Giant panda | Smithsonian's National Zoo and Conservation Biology Institute",
+      "source_url": "https://nationalzoo.si.edu/animals/giant-panda"
+    },
+    {
+      "label": "Giant Panda National Park",
+      "value": "22,000 km²",
+      "detail": "Established in October 2021, the park spans more than 22,000 square kilometres and gives significant protection to around 72 percent of all wild giant pandas.",
+      "source_title": "China's wild panda population nears 1,900",
+      "source_url": "https://english.www.gov.cn/archive/statistics/202401/25/content_WS65b20287c6d0868f4e8e37be.html"
+    }
+  ],
+  "sections": [
+    {
+      "heading": "A carnivore that eats salad",
+      "body": "The giant panda belongs to the order Carnivora and still carries a carnivore's short digestive tract, yet almost everything it eats is bamboo. It digests only about 17 percent of the dry matter it swallows, so it compensates with sheer volume — foraging some 14 hours a day and defecating more than 100 times daily. Gut microbes, not panda genes, do much of the work of breaking down bamboo fibre."
+    },
+    {
+      "heading": "The comeback that took 40 years",
+      "body": "China's national surveys tell the story: 2,459 pandas in 1974–1977, a crash to 1,114 by 1985–1988, then a recovery to 1,596 in 2000–2004 and 1,864 in 2011–2014. A 1988 poaching ban, a reserve network that grew to 67 sites, and reforestation programmes such as Grain-to-Green expanded occupied habitat by 11.8 percent between the third and fourth surveys. The IUCN downlisted the species to Vulnerable in 2016, while warning that climate change could erase more than 35 percent of the panda's bamboo habitat within 80 years."
+    },
+    {
+      "heading": "Built for a bad diet",
+      "body": "Pandas live in temperate montane forest in Sichuan, Shaanxi and Gansu, between about 1,200 and 4,100 metres. Their adaptations are all about conserving energy: a thick pelage, unusually small organs, sloth-like energy expenditure, and a famous pseudo-thumb for handling bamboo. They do not hibernate, and mothers raise a single cub — almost always just one, even when twins are born — in rock caves or hollow trees every two to three years."
+    }
+  ],
+  "sources": [
+    {
+      "title": "Ailuropoda melanoleuca (Giant Panda) — The IUCN Red List of Threatened Species 2016: e.T712A121745669 (errata version published 2017)",
+      "url": "https://www.iucnredlist.org/species/712/121745669",
+      "publisher": "IUCN Red List of Threatened Species",
+      "accessed": "2026-07-28"
+    },
+    {
+      "title": "Giant Panda | WWF",
+      "url": "https://www.worldwildlife.org/species/giant-panda",
+      "publisher": "World Wildlife Fund",
+      "accessed": "2026-07-28"
+    },
+    {
+      "title": "Giant panda | Smithsonian's National Zoo and Conservation Biology Institute",
+      "url": "https://nationalzoo.si.edu/animals/giant-panda",
+      "publisher": "Smithsonian's National Zoo and Conservation Biology Institute",
+      "accessed": "2026-07-28"
+    },
+    {
+      "title": "Giant Panda | San Diego Zoo Animals & Plants",
+      "url": "https://animals.sandiegozoo.org/animals/giant-panda",
+      "publisher": "San Diego Zoo Wildlife Alliance",
+      "accessed": "2026-07-28"
+    },
+    {
+      "title": "China's wild panda population nears 1,900",
+      "url": "https://english.www.gov.cn/archive/statistics/202401/25/content_WS65b20287c6d0868f4e8e37be.html",
+      "publisher": "The State Council of the People's Republic of China (Xinhua)",
+      "accessed": "2026-07-28"
+    }
+  ]
+}
