@@ -36,6 +36,15 @@ git push
 
 **Do:** commit small and push often. A ten-minute-old commit rebases cleanly; a three-day branch does not. Pull before you start working, not just before you push.
 
+**Every pull that brings in new commits gets a review before you continue.** Each of us is driving an agent, so the remote moves constantly — and a clean rebase is not the same thing as a correct integration. Dispatch a sub-agent (`[Critic]` or `[Scout]`) to read the incoming commits and answer:
+
+- What changed, and does any of it touch `core/` or a port that in-flight work is being built against?
+- Does anything that just landed duplicate, contradict, or invalidate what's currently being built?
+- Do `uv run pytest` and `uv run --with mypy mypy --strict src` pass with their work *combined* with yours — not just individually?
+- Did someone widen a zone boundary, edit `pyproject.toml`, or change a shared file the rules above say to escalate on?
+
+Green tests after a rebase only prove the merge was textually clean. They don't prove two agents didn't just build the same thing two different ways, or that the contract you're coding against is still the contract. If in-flight work is building against something that just changed, stop it, re-brief it with the new reality, and restart — don't let it finish against a stale contract. This review is cheap; finding out three commits later is not.
+
 ## Pipeline
 
 ```
