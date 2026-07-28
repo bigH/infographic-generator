@@ -4,59 +4,64 @@
     "title": "Panda géant - tête (Ailuropoda melanoleuca) (1)",
     "alt_text": "Sunlit close-up profile of an adult giant panda's head and shoulders, showing the black patch around its eye, a rounded black ear, long white whiskers and a broad black nose, set against a blurred green bamboo background.",
     "credit": "Gzen92",
-    "license": "CC BY-SA 4.0",
+    "license": "CC-BY-SA-4.0",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
     "source_url": "https://commons.wikimedia.org/wiki/File:Panda_g%C3%A9ant_-_t%C3%AAte_(Ailuropoda_melanoleuca)_(1).jpg",
     "width": 1600,
     "height": 1066,
-    "mime_type": "image/jpeg"
+    "mime_type": "image/jpeg",
+    "modified": true
   },
   {
     "filename": "giant-panda-eating-bamboo.jpg",
     "title": "Giant panda eating bamboo",
     "alt_text": "A giant panda sitting upright in grass in front of a large grey boulder, gripping a peeled bamboo stalk in its front paws and chewing the end of it while looking toward the camera.",
     "credit": "Kevin Dooley",
-    "license": "CC BY 2.0",
+    "license": "CC-BY-2.0",
     "license_url": "https://creativecommons.org/licenses/by/2.0/",
     "source_url": "https://commons.wikimedia.org/wiki/File:Giant_panda_eating_bamboo.jpg",
     "width": 1600,
     "height": 1600,
-    "mime_type": "image/jpeg"
+    "mime_type": "image/jpeg",
+    "modified": true
   },
   {
     "filename": "giant-panda-cub.jpg",
     "title": "Panda Cub Xiao Qi Ji 03 - Climbing Trunk",
     "alt_text": "A giant panda cub standing on its hind legs on a green lawn, hugging a leaning bare tree trunk with both front paws and stretching its muzzle up along the bark, with a cut bamboo stalk lying on the grass behind it.",
     "credit": "Amaury Laporte",
-    "license": "CC BY 2.0",
+    "license": "CC-BY-2.0",
     "license_url": "https://creativecommons.org/licenses/by/2.0/",
     "source_url": "https://commons.wikimedia.org/wiki/File:Panda_Cub_Xiao_Qi_Ji_03_-_Climbing_Trunk.jpg",
     "width": 1600,
     "height": 1066,
-    "mime_type": "image/jpeg"
+    "mime_type": "image/jpeg",
+    "modified": true
   },
   {
     "filename": "giant-panda-full-body.jpg",
     "title": "Ailuropoda melanoleuca (Panda géant) - 445",
     "alt_text": "An adult giant panda reclining against a large boulder on a grassy zoo lawn, seated amid a wide scattered pile of cut bamboo stalks and leaves that covers its lap, looking toward the camera.",
-    "credit": "William Crochot",
-    "license": "CC BY-SA 4.0",
+    "credit": "© William Crochot / Wikimedia Commons",
+    "license": "CC-BY-SA-4.0",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
     "source_url": "https://commons.wikimedia.org/wiki/File:Ailuropoda_melanoleuca_(Panda_g%C3%A9ant)_-_445.jpg",
     "width": 1600,
     "height": 1066,
-    "mime_type": "image/jpeg"
+    "mime_type": "image/jpeg",
+    "modified": true
   },
   {
     "filename": "giant-panda-in-habitat.jpg",
     "title": "Qinling Giant Panda, Shaanxi, China",
     "alt_text": "A wild giant panda sitting on the leaf-littered floor of a dense bamboo thicket in the Qinling Mountains of Shaanxi, partly screened by thin green bamboo stems and ferns as it turns its head toward the camera.",
     "credit": "james_birdtourasia",
-    "license": "CC0 1.0",
+    "license": "CC0-1.0",
     "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
     "source_url": "https://commons.wikimedia.org/wiki/File:Qinling_Giant_Panda,_Shaanxi,_China.jpg",
     "width": 1600,
     "height": 1066,
-    "mime_type": "image/jpeg"
+    "mime_type": "image/jpeg",
+    "modified": true
   }
 ]

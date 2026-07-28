@@ -1,0 +1,432 @@
+{#-
+  Specimen-sheet layout. Ink masthead with the hero punched into it, a ledger of
+  statistics broken by inverted "patch" rows, prose set as side-heads, and an
+  attribution colophon. Rendered by an Environment with autoescape=True.
+-#}
+<!doctype html>
+<html lang="{{ page.lang }}" dir="{{ page.direction }}" data-theme="{{ page.theme }}">
+<head>
+<meta charset="utf-8">
+<title>{{ page.title }}</title>
+<style>
+:root {
+  --w: {{ page.width_px }}px;
+  --pad: {{ page.gutter_px }}px;
+  --display: "Superclarendon", "Rockwell", "Bookman Old Style", Georgia, serif;
+  --body: "Iowan Old Style", "Charter", "Bitstream Charter", "PT Serif", Georgia, serif;
+  --data: "Menlo", "SF Mono", "DejaVu Sans Mono", "Consolas", monospace;
+
+  --paper: #eceae2;
+  --patch: #17150f;
+  --on-paper: #1a1712;
+  --on-patch: #f1efe6;
+  --dim-paper: #6a6558;
+  --dim-patch: #a29e8d;
+  --rule-paper: #c8c4b7;
+  --rule-patch: #3b3729;
+  --accent-paper: #5c6a12;
+  --accent-patch: #bccb4e;
+}
+:root[data-theme="dark"] {
+  --paper: #14130d;
+  --patch: #eceae2;
+  --on-paper: #eeece3;
+  --on-patch: #17150f;
+  --dim-paper: #8e8a79;
+  --dim-patch: #6a6558;
+  --rule-paper: #343024;
+  --rule-patch: #c8c4b7;
+  --accent-paper: #bccb4e;
+  --accent-patch: #5c6a12;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { background: var(--paper); }
+body {
+  width: var(--w);
+  background: var(--paper);
+  color: var(--on-paper);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+{% if page.min_height_px %}
+body { min-height: {{ page.min_height_px }}px; }
+{% endif %}
+img { display: block; width: 100%; height: 100%; object-fit: cover; }
+li { list-style: none; }
+
+.gutter { padding-inline: var(--pad); }
+.rule { height: 6px; background: var(--accent-paper); }
+
+/* --- shared devices ------------------------------------------------ */
+.tick {
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  border-inline-start: 2px solid var(--accent-paper);
+  padding-inline-start: 9px;
+  color: var(--dim-paper);
+}
+.on-ink .tick { border-inline-start-color: var(--accent-patch); color: var(--dim-patch); }
+
+/* --- masthead ------------------------------------------------------ */
+.masthead {
+  display: grid;
+  grid-template-columns: 46fr 54fr;
+  background: var(--patch);
+  color: var(--on-patch);
+}
+.masthead--flat { grid-template-columns: 1fr; }
+.masthead__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 44px;
+  min-height: 620px;
+  padding-block: 62px 46px;
+}
+.masthead--flat .masthead__text { min-height: 0; padding-block: 76px 52px; }
+
+.title {
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+.title--xl { font-size: 88px; }
+.title--l  { font-size: 72px; }
+.title--m  { font-size: 58px; }
+.title--s  { font-size: 46px; }
+.masthead--flat .title--xl { font-size: 104px; }
+
+.subtitle {
+  margin-top: 26px;
+  max-width: 30ch;
+  font-size: 21px;
+  font-style: italic;
+  line-height: 1.36;
+  color: var(--dim-patch);
+}
+.masthead--flat .subtitle { max-width: 56ch; }
+
+.index { display: flex; flex-wrap: wrap; gap: 9px 22px; }
+
+.hero { position: relative; overflow: hidden; }
+.hero__credit {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  padding: 26px 18px 10px;
+  background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
+  color: #eeeade;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-align: end;
+}
+
+/* --- lede ----------------------------------------------------------- */
+.lede {
+  background: var(--patch);
+  color: var(--on-patch);
+  padding-block: 40px 68px;
+}
+.lede p {
+  max-width: 62ch;
+  border-top: 1px solid var(--rule-patch);
+  padding-top: 34px;
+  font-size: 24px;
+  line-height: 1.5;
+}
+
+/* --- ledger --------------------------------------------------------- */
+.ledger { padding-block: 4px 0; }
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(210px, 1.3fr) minmax(230px, 1.55fr);
+  gap: 34px;
+  align-items: baseline;
+  border-top: 1px solid var(--rule-paper);
+  padding-block: 30px 34px;
+}
+.row__label {
+  font-family: var(--data);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  color: var(--accent-paper);
+}
+.row__value {
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 0.94;
+  letter-spacing: -0.02em;
+  overflow-wrap: break-word;
+}
+.value--xl { font-size: 96px; }
+.value--l  { font-size: 72px; }
+.value--m  { font-size: 52px; }
+.value--s  { font-size: 40px; }
+.row__unit {
+  font-family: var(--data);
+  font-size: 0.3em;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  margin-inline-start: 0.34em;
+  color: var(--dim-paper);
+}
+.row__detail { font-size: 15.5px; line-height: 1.55; color: var(--dim-paper); }
+.row__src { margin-top: 12px; }
+
+.row--patch {
+  display: block;
+  background: var(--patch);
+  color: var(--on-patch);
+  border-top: 0;
+  padding-block: 46px 48px;
+}
+.row--patch .row__label { color: var(--accent-patch); }
+.row--patch .row__value { margin-top: 16px; max-width: 18ch; }
+.row--patch .value--xl { font-size: 148px; }
+.row--patch .value--l  { font-size: 104px; }
+.row--patch .value--m  { font-size: 74px; }
+.row--patch .value--s  { font-size: 54px; }
+.row--patch .row__unit { color: var(--dim-patch); }
+.row--patch .row__detail {
+  margin-top: 30px;
+  columns: 2;
+  column-gap: 40px;
+  font-size: 15.5px;
+  color: var(--dim-patch);
+}
+.row--patch .row__src { color: var(--dim-patch); }
+
+/* --- image bands ---------------------------------------------------- */
+.band {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+  padding-block: 52px;
+}
+.band figcaption {
+  margin-top: 11px;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+  color: var(--dim-paper);
+}
+
+/* --- narrative ------------------------------------------------------ */
+.essay { padding-block: 14px 8px; }
+.section {
+  display: grid;
+  grid-template-columns: minmax(180px, 300px) 1fr;
+  gap: 46px;
+  border-top: 1px solid var(--rule-paper);
+  padding-block: 42px 46px;
+}
+.section__heading {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 29px;
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  border-inline-start: 2px solid var(--accent-paper);
+  padding-inline-start: 14px;
+}
+.section__body { max-width: 66ch; font-size: 18px; line-height: 1.64; }
+
+/* --- apparatus ------------------------------------------------------ */
+.apparatus { border-top: 1px solid var(--rule-paper); padding-block: 40px 52px; }
+.apparatus__label { margin-bottom: 24px; }
+.refs { columns: 2; column-gap: 46px; }
+.refs li { break-inside: avoid; margin-bottom: 18px; font-size: 14px; line-height: 1.45; }
+.refs__meta {
+  display: block;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--dim-paper);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+/* --- colophon ------------------------------------------------------- */
+.colophon {
+  background: var(--patch);
+  color: var(--on-patch);
+  padding-block: 44px 52px;
+}
+.colophon__label { margin-bottom: 26px; }
+.credits { display: grid; gap: 16px; }
+.credit {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.5fr) 1fr;
+  gap: 10px 30px;
+  border-top: 1px solid var(--rule-patch);
+  padding-top: 14px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.credit__license {
+  font-family: var(--data);
+  font-size: 11.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent-patch);
+}
+.credit__adapted { display: block; color: var(--dim-patch); text-transform: none; letter-spacing: 0.04em; }
+.credit__work { color: var(--on-patch); }
+.credit__author { color: var(--dim-patch); }
+.credit__url {
+  display: block;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--dim-patch);
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+</style>
+</head>
+<body>
+<div class="rule"></div>
+
+<header class="masthead on-ink {{ 'masthead--split' if page.hero else 'masthead--flat' }}">
+  <div class="masthead__text gutter">
+    <div>
+      <h1 class="title title--{{ page.title_scale }}">{{ page.title }}</h1>
+      {% if page.subtitle %}
+      <p class="subtitle">{{ page.subtitle }}</p>
+      {% endif %}
+    </div>
+    {% if page.keywords %}
+    <ul class="index">
+      {% for keyword in page.keywords %}
+      <li class="tick">{{ keyword }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% if page.hero %}
+  <figure class="hero">
+    <img src="{{ page.hero.data_uri }}" alt="{{ page.hero.alt }}">
+    <figcaption class="hero__credit">{{ page.hero.caption }}</figcaption>
+  </figure>
+  {% endif %}
+</header>
+
+{% if page.summary %}
+<section class="lede on-ink gutter">
+  <p>{{ page.summary }}</p>
+</section>
+{% endif %}
+
+{% for block in page.ledger %}
+<section class="ledger">
+  {% for stat in block %}
+  <div class="row gutter{{ ' row--patch on-ink' if stat.feature }}">
+    <p class="row__label">{{ stat.label }}</p>
+    <p class="row__value value--{{ stat.scale }}">{{ stat.value }}
+      {%- if stat.unit %}<span class="row__unit">{{ stat.unit }}</span>{% endif %}</p>
+    <div class="row__detail">
+      {% if stat.detail %}<p>{{ stat.detail }}</p>{% endif %}
+      {% if stat.attribution %}<p class="row__src tick">{{ stat.attribution }}</p>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% if loop.first and page.band %}
+<section class="band gutter">
+  {% for figure in page.band %}
+  <figure>
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{% endif %}
+{% endfor %}
+
+{% if not page.ledger and page.band %}
+<section class="band gutter">
+  {% for figure in page.band %}
+  <figure>
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if page.sections %}
+<div class="essay">
+  {% for section in page.sections %}
+  <section class="section gutter">
+    <h2 class="section__heading">{{ section.heading }}</h2>
+    <div class="section__body"><p>{{ section.body }}</p></div>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if page.coda %}
+<section class="band gutter">
+  {% for figure in page.coda %}
+  <figure>
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if page.references %}
+<section class="apparatus gutter">
+  <p class="apparatus__label tick">Sources</p>
+  <ul class="refs">
+    {% for reference in page.references %}
+    <li>
+      {{ reference.title }}
+      <span class="refs__meta">
+        {%- if reference.publisher %}{{ reference.publisher }} — {% endif -%}
+        {{ reference.url }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if page.credits %}
+<footer class="colophon on-ink gutter">
+  <p class="colophon__label tick">Image credits</p>
+  <div class="credits">
+    {% for credit in page.credits %}
+    <div class="credit">
+      <p class="credit__license">
+        {{ credit.license }}
+        {% if credit.adapted %}<span class="credit__adapted">adapted from the original</span>{% endif %}
+        {% if credit.license_url %}<span class="credit__url">{{ credit.license_url }}</span>{% endif %}
+      </p>
+      <p>
+        {% if credit.work %}<span class="credit__work">{{ credit.work }}</span>{% endif %}
+        {% if credit.author %}<span class="credit__author"> — {{ credit.author }}</span>{% endif %}
+        {% if credit.source_url %}<span class="credit__url">{{ credit.source_url }}</span>{% endif %}
+      </p>
+    </div>
+    {% endfor %}
+  </div>
+</footer>
+{% endif %}
+</body>
+</html>
