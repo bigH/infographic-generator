@@ -3,21 +3,29 @@
 Everything here is an outcome the ``Composer`` docstring promises: a
 self-contained document, escaped untrusted text, honoured render options,
 visible attribution, and every fact on the page. The HTML is parsed with the
-stdlib rather than pattern-matched, and the escaping test is confirmed a second
-time inside a real chromium DOM.
+stdlib rather than pattern-matched.
+
+Some promises are only observable once a browser has laid the page out -- a
+``text-transform`` that mangles a licence URI, an ``aspect-ratio`` that a later
+rule overrides, a caption that spills out of its figure. Those are asserted in a
+real chromium DOM against one browser shared by the whole module.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+import pytest_asyncio
 
 from infographic_generator.composition import HtmlComposer
+from infographic_generator.composition.layout import font_faces
 from infographic_generator.core.encoding import to_data_uri
 from infographic_generator.core.models import (
     Brief,
@@ -33,6 +41,9 @@ from infographic_generator.core.models import (
     Theme,
 )
 from infographic_generator.core.ports import Composer
+
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, Page
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PANDA_DIR = REPO_ROOT / "assets" / "panda"
@@ -69,6 +80,71 @@ _CSS_URL = re.compile(
     r"""url\(\s*(?P<quote>['"]?)(?P<url>.*?)(?P=quote)\s*\)""", re.DOTALL
 )
 
+WOFF2_DATA_PREFIX = "data:font/woff2;base64,"
+
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_FONT_FACE = re.compile(r"@font-face\s*\{(?P<body>[^}]*)\}", re.IGNORECASE)
+_SRC_DECL = re.compile(
+    r"\bsrc\s*:\s*(?P<value>(?:url\([^)]*\)|[^;{}])*)", re.IGNORECASE
+)
+"""``url(...)`` is matched whole because a data URI contains the ``;`` that would
+otherwise look like the end of the declaration."""
+_FONT_STACK_DECL = re.compile(
+    r"(?:font-family|--display|--body|--data)\s*:\s*(?P<stack>[^;{}]+)", re.IGNORECASE
+)
+"""Every declaration that names a typeface. The custom properties hold the three
+stacks the rest of the sheet refers to through ``var()``, so they count too."""
+
+GENERIC_FAMILIES = frozenset(
+    {
+        # CSS generic families: resolved by the browser, never by the machine.
+        "serif",
+        "sans-serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui",
+        "ui-serif",
+        "ui-sans-serif",
+        "ui-monospace",
+        "ui-rounded",
+        "math",
+        "emoji",
+        "fangsong",
+        # Web-safe families, allowed only because they may sit *behind* an
+        # embedded face to supply a glyph its subset lacks -- never to carry the
+        # design. The current stylesheet uses none of them; the list exists so
+        # adding one is a deliberate act rather than a silent regression.
+        "arial",
+        "helvetica",
+        "georgia",
+        "times new roman",
+        "times",
+        "courier new",
+        "courier",
+        "verdana",
+        "tahoma",
+        "trebuchet ms",
+        "dejavu sans mono",
+        "liberation mono",
+    }
+)
+
+LOCAL_FONT_NAMES = (
+    "superclarendon",
+    "iowan",
+    "charter",
+    "rockwell",
+    "ptserif",
+    "menlo",
+    "sf mono",
+    "bookman",
+    "consolas",
+    "bitstream",
+)
+"""Families that only exist on one vendor's machines. Every one of these has been
+in this stylesheet at some point; each made the render machine-dependent."""
+
 
 # --------------------------------------------------------------------------- #
 # Parsing
@@ -85,24 +161,27 @@ class _Collector(HTMLParser):
         self.text_chunks: list[str] = []
         self.style_chunks: list[str] = []
         self.title_chunks: list[str] = []
-        self._open: list[str] = []
+        self.class_chunks: dict[str, list[str]] = {}
+        self._open: list[tuple[str, tuple[str, ...]]] = []
 
     def handle_decl(self, decl: str) -> None:
         self.doctypes.append(decl)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append((tag, {name: value or "" for name, value in attrs}))
+        attributes = {name: value or "" for name, value in attrs}
+        self.tags.append((tag, attributes))
         if tag not in VOID_ELEMENTS:
-            self._open.append(tag)
+            self._open.append((tag, tuple(attributes.get("class", "").split())))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag not in self._open:
+        if all(open_tag != tag for open_tag, _ in self._open):
             return
-        while self._open and self._open.pop() != tag:
+        while self._open and self._open.pop()[0] != tag:
             pass
 
     def handle_data(self, data: str) -> None:
-        match self._open[-1] if self._open else "":
+        tag = self._open[-1][0] if self._open else ""
+        match tag:
             case "style":
                 self.style_chunks.append(data)
             case "script":
@@ -111,6 +190,9 @@ class _Collector(HTMLParser):
                 self.title_chunks.append(data)
             case _:
                 self.text_chunks.append(data)
+                for _, classes in self._open:
+                    for name in classes:
+                        self.class_chunks.setdefault(name, []).append(data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +204,13 @@ class ParsedHtml:
     text: str
     css: str
     titles: tuple[str, ...]
+    class_text: Mapping[str, str]
+    """Text rendered inside each CSS class, that class's descendants included.
+
+    Lets an assertion say *where* a string landed, which matters when the same
+    string is legitimately rendered twice -- a publisher shows up beside its
+    section and again in the bibliography.
+    """
 
     @property
     def title_count(self) -> int:
@@ -129,6 +218,16 @@ class ParsedHtml:
 
     def tagged(self, name: str) -> tuple[Mapping[str, str], ...]:
         return tuple(attrs for tag, attrs in self.tags if tag == name)
+
+    def classed(self, name: str) -> tuple[Mapping[str, str], ...]:
+        return tuple(
+            attrs
+            for _, attrs in self.tags
+            if name in attrs.get("class", "").split()
+        )
+
+    def text_in(self, name: str) -> str:
+        return self.class_text.get(name, "")
 
     @property
     def attr_values(self) -> tuple[str, ...]:
@@ -177,7 +276,53 @@ def parse(html: str) -> ParsedHtml:
         text="".join(collector.text_chunks),
         css="".join(collector.style_chunks),
         titles=tuple(collector.title_chunks),
+        class_text={
+            name: "".join(chunks) for name, chunks in collector.class_chunks.items()
+        },
     )
+
+
+def without_payloads(css: str) -> str:
+    """CSS with every ``url(...)`` body elided.
+
+    Base64 is 70 kB of near-random letters here, so ``"//" in css`` and even
+    ``"iowan" in css.lower()`` can hit inside a font payload. Searching for a font
+    name only means anything once the payloads are gone.
+    """
+    return _CSS_URL.sub("url()", css)
+
+
+def css_declarations(css: str) -> str:
+    """The stylesheet reduced to what a browser acts on: payloads elided and
+    comments dropped, since a comment may legitimately name the very families it
+    is warning the next reader away from.
+    """
+    return without_payloads(_CSS_COMMENT.sub(" ", css))
+
+
+def font_face_bodies(css: str) -> tuple[str, ...]:
+    return tuple(match.group("body") for match in _FONT_FACE.finditer(css))
+
+
+def font_families(css: str) -> tuple[str, ...]:
+    """Every family named by the sheet, lowercased, ``var()`` references dropped."""
+    return tuple(
+        name
+        for match in _FONT_STACK_DECL.finditer(css)
+        for name in _split_stack(match.group("stack"))
+    )
+
+
+def _split_stack(stack: str) -> Iterator[str]:
+    for entry in stack.split(","):
+        name = entry.strip().strip("\"'").strip().lower()
+        if name and not name.startswith("var("):
+            yield name
+
+
+def elide(value: str, keep: int = 60) -> str:
+    """Base64 in a failure message drowns the message."""
+    return value if len(value) <= keep else f"{value[:keep]}... ({len(value)} chars)"
 
 
 # --------------------------------------------------------------------------- #
@@ -225,13 +370,38 @@ def make_asset(
 
 
 def make_facts(count: int) -> tuple[Fact, ...]:
+    """Facts whose labels and values are all zero-padded, hence none a prefix of
+    another: ``"Bamboo metric 1" in text`` would otherwise pass on fact 11 alone.
+    """
     return tuple(
         Fact(
-            label=f"Bamboo metric {index}",
-            value=f"{index}7.5",
+            label=f"Bamboo metric {index:02d}",
+            value=f"{index:02d}7.5",
             unit="kg",
-            detail=f"Measured across {index} reserves",
-            source=make_source(url=f"https://example.org/study-{index}"),
+            detail=f"Measured across {index:02d} reserves",
+            source=make_source(url=f"https://example.org/study-{index:02d}"),
+        )
+        for index in range(count)
+    )
+
+
+def make_numbered_assets(count: int) -> tuple[ImageAsset, ...]:
+    """Assets that are distinguishable one from another in the rendered output:
+    distinct bytes, so distinct data URIs, and distinct credit strings."""
+    return tuple(
+        make_asset(
+            content=PNG_PAYLOAD + bytes((index,)),
+            alt_text=f"Panda photograph {index:02d}",
+            credit=make_credit(
+                license_text=f"CC BY {index:02d}.0",
+                author=f"Photographer {index:02d}",
+                license_url=f"https://creativecommons.org/licenses/by/{index:02d}.0/",
+                source=make_source(
+                    url=f"https://example.org/photo-{index:02d}",
+                    title=f"Panda photograph {index:02d}",
+                ),
+            ),
+            role=ImageRole.HERO if index == 0 else ImageRole.SUPPORTING,
         )
         for index in range(count)
     )
@@ -288,12 +458,17 @@ class PandaFixture:
     source_url: str
     alt_text: str
 
-    def as_asset(self, role: ImageRole = ImageRole.SUPPORTING) -> ImageAsset:
+    def as_asset(
+        self,
+        role: ImageRole = ImageRole.SUPPORTING,
+        width_px: int = 1600,
+        height_px: int = 1066,
+    ) -> ImageAsset:
         return ImageAsset(
             content=PANDA_DIR / self.filename,
             mime_type="image/jpeg",
-            width_px=1600,
-            height_px=1066,
+            width_px=width_px,
+            height_px=height_px,
             alt_text=self.alt_text,
             credit=ImageCredit(
                 license=self.license_text,
@@ -347,6 +522,51 @@ def assert_structurally_valid(html: str) -> ParsedHtml:
     count = parsed.title_count
     assert count == 1, f"expected exactly one <title>, got {count}"
     return parsed
+
+
+# --------------------------------------------------------------------------- #
+# A real browser, launched once
+# --------------------------------------------------------------------------- #
+
+BROWSER_LOOP = pytest.mark.asyncio(loop_scope="module")
+"""Tests sharing the module-scoped browser must share its event loop too:
+playwright objects belong to the loop that created them."""
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def chromium() -> AsyncIterator[Browser]:
+    """One browser for the whole module. Launching costs more than every
+    measurement taken in it put together."""
+    try:
+        from playwright.async_api import Error as PlaywrightError
+        from playwright.async_api import async_playwright
+    except ImportError:  # pragma: no cover - playwright is a declared dependency
+        pytest.skip("playwright is not installed")
+
+    async with async_playwright() as playwright:
+        try:
+            browser = await playwright.chromium.launch()
+        except PlaywrightError as error:  # pragma: no cover - browser not installed
+            pytest.skip(f"chromium is unavailable: {error}")
+        try:
+            yield browser
+        finally:
+            await browser.close()
+
+
+@asynccontextmanager
+async def laid_out(browser: Browser, composition: Composition) -> AsyncIterator[Page]:
+    """The composition in a DOM, under the renderer's own rules: viewport from the
+    composition, every network request aborted."""
+    page = await browser.new_page(
+        viewport={"width": composition.width_px, "height": 900}
+    )
+    try:
+        await page.route("**/*", lambda route: route.abort())
+        await page.set_content(composition.html, wait_until="load")
+        yield page
+    finally:
+        await page.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -471,38 +691,22 @@ async def test_hostile_urls_never_reach_a_fetchable_attribute() -> None:
         )
 
 
-async def test_payloads_are_inert_text_in_a_real_browser_dom() -> None:
-    try:
-        from playwright.async_api import Error as PlaywrightError
-        from playwright.async_api import async_playwright
-    except ImportError:  # pragma: no cover - playwright is a declared dependency
-        pytest.skip("playwright is not installed")
-
+@BROWSER_LOOP
+async def test_payloads_are_inert_text_in_a_real_browser_dom(
+    chromium: Browser,
+) -> None:
     content, images = hostile_inputs()
     composition = await HtmlComposer().compose(make_brief(), content, images)
 
-    async with async_playwright() as playwright:
-        try:
-            browser = await playwright.chromium.launch()
-        except PlaywrightError as error:  # pragma: no cover - browser not installed
-            pytest.skip(f"chromium is unavailable: {error}")
-        try:
-            page = await browser.new_page()
-            await page.route("**/*", lambda route: route.abort())
-            await page.set_content(composition.html, wait_until="load")
-
-            scripts: int = await page.evaluate(
-                "document.querySelectorAll('script').length"
-            )
-            on_error: int = await page.evaluate(
-                "document.querySelectorAll('[onerror]').length"
-            )
-            injected_img: int = await page.evaluate(
-                "document.querySelectorAll('img[src=\"x\"]').length"
-            )
-            body_text: str = await page.evaluate("document.body.innerText")
-        finally:
-            await browser.close()
+    async with laid_out(chromium, composition) as page:
+        scripts: int = await page.evaluate("document.querySelectorAll('script').length")
+        on_error: int = await page.evaluate(
+            "document.querySelectorAll('[onerror]').length"
+        )
+        injected_img: int = await page.evaluate(
+            "document.querySelectorAll('img[src=\"x\"]').length"
+        )
+        body_text: str = await page.evaluate("document.body.innerText")
 
     assert scripts == 0, "a <script> element made it into the DOM"
     assert on_error == 0, "an element with an onerror handler made it into the DOM"
@@ -597,6 +801,92 @@ async def test_every_embedded_image_carries_its_licence() -> None:
         )
 
 
+async def test_exactly_the_displayed_images_are_embedded_and_credited() -> None:
+    """"You may use a subset of ``images``, but embed and credit exactly the ones
+    you display." Embedding an unused asset bloats the document; crediting one
+    claims a use that was never made."""
+    assets = make_numbered_assets(6)
+
+    composition = await HtmlComposer().compose(make_brief(), make_content(), assets)
+    parsed = assert_structurally_valid(composition.html)
+    embedded = {url for url in parsed.fetchable_urls if url.startswith("data:image/")}
+    credit_blocks = parsed.classed("credit")
+
+    assert embedded, "no image was embedded at all"
+    assert len(embedded) < len(assets), (
+        f"expected a subset of {len(assets)} assets to be displayed, "
+        f"but all {len(embedded)} were embedded -- the test no longer proves anything"
+    )
+    assert len(embedded) == len(credit_blocks), (
+        f"{len(embedded)} embedded images but {len(credit_blocks)} credit blocks: "
+        "every displayed image needs exactly one credit"
+    )
+
+    for asset in assets:
+        credit = asset.credit
+        assert credit.license_url is not None and credit.source is not None
+        if to_data_uri(asset) in embedded:
+            assert credit.license in parsed.text, (
+                f"{asset.alt_text} is embedded but its licence is not rendered"
+            )
+            assert credit.license_url in parsed.text, (
+                f"{asset.alt_text} is embedded but its licence URL is not rendered"
+            )
+        else:
+            for unused in (credit.license, credit.license_url, credit.source.url):
+                assert unused not in parsed.text, (
+                    f"{asset.alt_text} was never displayed, yet {unused!r} is "
+                    "rendered -- that credits a use the page did not make"
+                )
+
+
+async def test_a_blank_credit_renders_no_credit_row_at_all() -> None:
+    """An ``ImageCredit`` with nothing in it would otherwise draw a ruled row that
+    says nothing."""
+    blank = ImageCredit(license="", author=None, license_url=None, source=None)
+    asset = make_asset(credit=blank)
+
+    composition = await HtmlComposer().compose(make_brief(), make_content(), (asset,))
+    parsed = assert_structurally_valid(composition.html)
+
+    assert not parsed.classed("credit"), (
+        "a credit with no licence, author, licence URL or source rendered a row anyway"
+    )
+    assert any(url.startswith("data:image/") for url in parsed.fetchable_urls), (
+        "the image itself should still be displayed; only its empty credit is dropped"
+    )
+
+
+@pytest.mark.parametrize(
+    "credit",
+    [
+        ImageCredit(license="CC0 1.0", author=None, license_url=None, source=None),
+        ImageCredit(license="", author="Gzen92", license_url=None, source=None),
+        ImageCredit(
+            license="",
+            author=None,
+            license_url="https://creativecommons.org/licenses/by-sa/4.0/",
+            source=None,
+        ),
+        ImageCredit(license="", author=None, license_url=None, source=make_source()),
+    ],
+    ids=["licence-only", "author-only", "licence-url-only", "source-only"],
+)
+async def test_any_single_piece_of_attribution_earns_a_credit_row(
+    credit: ImageCredit,
+) -> None:
+    asset = make_asset(credit=credit)
+
+    composition = await HtmlComposer().compose(make_brief(), make_content(), (asset,))
+    parsed = assert_structurally_valid(composition.html)
+
+    blocks = parsed.classed("credit")
+    assert len(blocks) == 1, (
+        f"expected one credit row for {credit}, got {len(blocks)}: attribution that "
+        "reaches the composer must reach the page"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 6. Completeness
 # --------------------------------------------------------------------------- #
@@ -615,6 +905,64 @@ async def test_every_fact_is_rendered_because_capping_is_the_researchers_job() -
         if fact.label not in parsed.text or fact.value not in parsed.text
     ]
     assert not missing, f"facts dropped from the layout: {missing}"
+
+
+@pytest.mark.parametrize("count", [1, 2, 4, 5, 6, 9, 10, 23])
+async def test_every_fact_survives_however_the_ledger_chunks_them(count: int) -> None:
+    """The ledger sets five rows to a block. Counts that straddle a block boundary
+    are where rows go missing; 23 is where an implementation that sliced once
+    instead of chunking silently dropped everything past the tenth."""
+    facts = make_facts(count)
+
+    composition = await HtmlComposer().compose(
+        make_brief(), make_content(facts=facts), ()
+    )
+    parsed = assert_structurally_valid(composition.html)
+
+    missing = [
+        fact.label
+        for fact in facts
+        if fact.label not in parsed.text or fact.value not in parsed.text
+    ]
+    assert not missing, f"{len(missing)} of {count} facts dropped: {missing}"
+
+    rows = parsed.classed("row__label")
+    assert len(rows) == count, f"expected {count} ledger rows, rendered {len(rows)}"
+
+
+async def test_a_sections_own_source_is_shown_beside_it_and_in_the_bibliography() -> (
+    None
+):
+    """A section's sources are as real as the document's. They used to be dropped
+    on the floor -- and the publisher alone proves nothing, because the
+    bibliography renders it too."""
+    source = Source(
+        url="https://www.smithsonianmag.com/giant-panda-diet",
+        title="What giant pandas actually eat",
+        publisher="Smithsonian Magazine",
+    )
+    content = make_content(
+        sections=(
+            NarrativeSection(
+                heading="Diet",
+                body="Bamboo makes up almost the whole diet.",
+                sources=(source,),
+            ),
+        )
+    )
+
+    composition = await HtmlComposer().compose(make_brief(), content, ())
+    parsed = assert_structurally_valid(composition.html)
+
+    assert source.publisher is not None
+    assert source.publisher in parsed.text_in("section__src"), (
+        f"{source.publisher!r} is not shown beside the prose it supports; "
+        f"the section attribution reads {parsed.text_in('section__src')!r}"
+    )
+    assert source.url in parsed.text_in("refs__meta"), (
+        f"{source.url!r} never reached the bibliography, so the citation is "
+        "unverifiable from the PNG"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -654,6 +1002,36 @@ async def test_document_declares_the_brief_locale_and_a_single_title() -> None:
     assert composition.title, "Composition.title must be populated"
 
 
+@pytest.mark.parametrize(
+    ("locale", "lang", "direction"),
+    [
+        ("en-US", "en-US", "ltr"),
+        ("he_IL", "he-IL", "rtl"),
+        ("ar", "ar", "rtl"),
+        ("fr_CA", "fr-CA", "ltr"),
+    ],
+)
+async def test_html_lang_is_a_language_tag_and_direction_follows_it(
+    locale: str, lang: str, direction: str
+) -> None:
+    """``he_IL`` is a POSIX locale name. ``<html lang>`` takes a BCP 47 tag, where
+    the separator is a hyphen -- an underscore makes the attribute invalid and the
+    language unknown to the browser."""
+    composition = await HtmlComposer().compose(
+        make_brief(locale=locale), make_content(), ()
+    )
+    parsed = assert_structurally_valid(composition.html)
+    root = parsed.tagged("html")[0]
+
+    assert root.get("lang") == lang, (
+        f"locale {locale!r} must render as BCP 47 {lang!r}, got {root.get('lang')!r}"
+    )
+    assert root.get("dir") == direction, (
+        f"locale {locale!r} is a {direction} language, "
+        f"but dir is {root.get('dir')!r}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 9. Unreadable assets
 # --------------------------------------------------------------------------- #
@@ -677,3 +1055,347 @@ async def test_html_composer_satisfies_the_composer_port() -> None:
     composition = await composer.compose(make_brief(), make_content(), ())
 
     assert isinstance(composition, Composition)
+
+
+# --------------------------------------------------------------------------- #
+# 11. Fonts
+# --------------------------------------------------------------------------- #
+# "Fonts must be a generic stack or a woff2 embedded as a data URI; a family that
+# only exists on your machine makes the render machine-dependent." The whole
+# stylesheet once set Superclarendon / Iowan Old Style / Menlo, so the same page
+# rendered as three different documents on three different machines -- and
+# nothing here noticed.
+
+
+async def test_no_font_family_names_a_typeface_only_some_machines_have() -> None:
+    composition = await HtmlComposer().compose(make_brief(), make_content(), ())
+    parsed = assert_structurally_valid(composition.html)
+    css = css_declarations(parsed.css)
+    embedded = {face.family.lower() for face in font_faces()}
+
+    families = font_families(css)
+    assert families, "the stylesheet declares no font-family at all"
+
+    unknown = sorted(set(families) - embedded - GENERIC_FAMILIES)
+    assert not unknown, (
+        f"font families that are neither embedded in the document nor generic: "
+        f"{unknown}. Embedded: {sorted(embedded)}. If one of these is genuinely "
+        f"safe everywhere, add it to GENERIC_FAMILIES on purpose."
+    )
+
+    reintroduced = [name for name in LOCAL_FONT_NAMES if name in css.lower()]
+    assert not reintroduced, (
+        f"machine-specific font names are back in the stylesheet: {reintroduced}. "
+        "Embed a woff2 as a data URI instead; a local family makes the PNG depend "
+        "on which machine rendered it."
+    )
+
+
+async def test_every_font_is_embedded_as_woff2_and_none_is_fetched() -> None:
+    composition = await HtmlComposer().compose(make_brief(), make_content(), ())
+    parsed = assert_structurally_valid(composition.html)
+
+    bodies = font_face_bodies(parsed.css)
+    assert bodies, "no @font-face block: nothing is embedded, so nothing is portable"
+    assert len(bodies) == len(font_faces()), (
+        f"layout.font_faces() reports {len(font_faces())} faces but the document "
+        f"declares {len(bodies)} @font-face blocks"
+    )
+
+    for body in bodies:
+        sources = tuple(match.group("value") for match in _SRC_DECL.finditer(body))
+        assert sources, f"@font-face with no src: {elide(without_payloads(body))!r}"
+        for source in sources:
+            urls = tuple(match.group("url") for match in _CSS_URL.finditer(source))
+            assert urls, f"@font-face src names no url(): {elide(source)!r}"
+            for url in urls:
+                assert url.startswith(WOFF2_DATA_PREFIX), (
+                    f"@font-face src must be an embedded woff2 "
+                    f"({WOFF2_DATA_PREFIX}...), got {elide(url)!r}"
+                )
+            outside = without_payloads(source).lower()
+            for reach in ("http", "//", "local("):
+                assert reach not in outside, (
+                    f"@font-face src reaches outside the document via {reach!r}: "
+                    f"{outside!r}"
+                )
+
+
+# --------------------------------------------------------------------------- #
+# 12. What the browser actually renders
+# --------------------------------------------------------------------------- #
+# Markup that reads correctly can still lay out wrongly: a licence URI
+# uppercased by an inherited text-transform, an aspect-ratio overridden by a
+# later height rule, a caption spilling out of its figure. None of these are
+# visible to a parser, and all three shipped.
+
+
+@BROWSER_LOOP
+async def test_licence_uris_are_rendered_exactly_as_supplied(
+    chromium: Browser,
+) -> None:
+    """``.credit__url`` inherited ``text-transform: uppercase`` from
+    ``.credit__license``, so every licence URI rendered UPPERCASED -- unusable,
+    because a URI in a PNG has to be retyped by hand. The markup was right the
+    whole time, which is why only the rendered page can catch it.
+    """
+    images = tuple(panda.as_asset() for panda in PANDAS)
+    composition = await HtmlComposer().compose(make_brief(), make_content(), images)
+
+    async with laid_out(chromium, composition) as page:
+        transformed: list[dict[str, str]] = await page.evaluate(TRANSFORMED_URL_TEXT_JS)
+        rendered: str = await page.evaluate("document.body.innerText")
+
+    assert not transformed, (
+        "text containing a URI is being case-transformed by CSS, which corrupts it: "
+        f"{transformed}"
+    )
+    for panda in PANDAS:
+        for url in (panda.license_url, panda.source_url):
+            assert url != url.upper(), (
+                f"fixture {url!r} has no lowercase letters, so it cannot show "
+                "whether the page uppercased it"
+            )
+            assert url in rendered, (
+                f"{url!r} is not in the rendered text of the page "
+                "(it may be there in a mangled form)"
+            )
+            assert url.upper() not in rendered, (
+                f"{url!r} was rendered uppercased; a licence URI has to be "
+                "transcribable by hand out of the PNG"
+            )
+
+
+TRANSFORMED_URL_TEXT_JS = """
+() => {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const offenders = [];
+  const seen = new Set();
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.nodeValue.includes('://')) continue;
+    const el = node.parentElement;
+    if (!el || seen.has(el)) continue;
+    seen.add(el);
+    const transform = getComputedStyle(el).textTransform;
+    if (transform !== 'none') {
+      offenders.push({
+        element: el.tagName.toLowerCase() + '.' + el.className,
+        textTransform: transform,
+        text: node.nodeValue.trim().slice(0, 60),
+      });
+    }
+  }
+  return offenders;
+}
+"""
+"""Own text nodes only. Judging by ``textContent`` would blame ``<body>`` for
+every URI on the page and report a uniform false positive."""
+
+
+ASPECT_RATIO_JS = """
+() => Array.from(document.querySelectorAll('img'))
+  .filter(el => el.style.aspectRatio)
+  .map(el => {
+    const box = el.getBoundingClientRect();
+    return {
+      declared: el.style.aspectRatio,
+      width: box.width,
+      height: box.height,
+      alt: el.alt,
+    };
+  })
+"""
+
+
+@BROWSER_LOOP
+async def test_a_declared_aspect_ratio_governs_the_rendered_image(
+    chromium: Browser,
+) -> None:
+    """``img { height: 100% }`` used to beat the inline ``aspect-ratio``, so every
+    figure in a band came out the height of its tallest sibling: a 3:2 image
+    rendered at 0.951 and lost about 37% of itself. The two band images here have
+    deliberately different ratios, so no single rendered height can satisfy both.
+    """
+    images = (
+        PANDAS[0].as_asset(role=ImageRole.HERO),
+        PANDAS[1].as_asset(width_px=1600, height_px=1066),
+        PANDAS[2].as_asset(width_px=1600, height_px=1600),
+    )
+    composition = await HtmlComposer().compose(make_brief(), make_content(), images)
+
+    async with laid_out(chromium, composition) as page:
+        measured: list[dict[str, float | str]] = await page.evaluate(ASPECT_RATIO_JS)
+
+    assert len(measured) >= 2, (
+        f"expected at least two images with an inline aspect-ratio, got {measured}"
+    )
+    declared_ratios = {_declared_ratio(str(box["declared"])) for box in measured}
+    assert len(declared_ratios) >= 2, (
+        f"every measured image declares the same ratio ({declared_ratios}), so this "
+        "test cannot tell a governing aspect-ratio from a shared rendered height"
+    )
+
+    for box in measured:
+        declared = _declared_ratio(str(box["declared"]))
+        width, height = float(box["width"]), float(box["height"])
+        assert height > 0, f"image {box['alt']!r} rendered with no height"
+        rendered = width / height
+        assert abs(rendered / declared - 1) <= 0.02, (
+            f"image {box['alt']!r} declares aspect-ratio {box['declared']!r} "
+            f"({declared:.4f}) but rendered {width:.1f}x{height:.1f} "
+            f"= {rendered:.4f}: a {abs(rendered / declared - 1):.1%} distortion, so "
+            "some other rule is deciding its height"
+        )
+
+
+def _declared_ratio(value: str) -> float:
+    """Chromium serialises ``aspect-ratio: 1.5`` back out as ``"1.5 / 1"``."""
+    numerator, _, denominator = value.partition("/")
+    return float(numerator) / float(denominator or 1)
+
+
+OVERFLOW_JS = """
+() => {
+  const name = el =>
+    el.tagName.toLowerCase() + (el.className ? '.' + el.className : '');
+  const offenders = [];
+  for (const el of document.body.querySelectorAll('*')) {
+    const box = el.getBoundingClientRect();
+    if (box.width === 0 && box.height === 0) continue;
+    const parent = el.parentElement;
+    if (parent) {
+      const bounds = parent.getBoundingClientRect();
+      const spills = {
+        below: box.bottom - bounds.bottom,
+        above: bounds.top - box.top,
+        past_start: bounds.left - box.left,
+        past_end: box.right - bounds.right,
+      };
+      for (const [side, amount] of Object.entries(spills)) {
+        if (amount > 1) {
+          offenders.push({
+            element: name(el), parent: name(parent),
+            problem: side, pixels: Math.round(amount),
+          });
+        }
+      }
+    }
+    if (el.scrollWidth > el.clientWidth + 1) {
+      offenders.push({
+        element: name(el), parent: parent ? name(parent) : null,
+        problem: 'scrolls_horizontally',
+        pixels: el.scrollWidth - el.clientWidth,
+      });
+    }
+  }
+  return offenders;
+}
+"""
+
+
+@BROWSER_LOOP
+async def test_nothing_overflows_the_box_it_is_laid_out_in(chromium: Browser) -> None:
+    """A screenshot has no scrollbars: anything outside its parent is either
+    clipped away or painted over a neighbour. Band captions used to hang 27-58px
+    below their own ``<figure>``."""
+    images = tuple(panda.as_asset() for panda in PANDAS)
+    content = make_content(facts=make_facts(7))
+    composition = await HtmlComposer().compose(make_brief(), content, images)
+
+    async with laid_out(chromium, composition) as page:
+        offenders: list[dict[str, object]] = await page.evaluate(OVERFLOW_JS)
+
+    assert not offenders, "elements overflow their parents:\n" + "\n".join(
+        f"  {row['element']} overflows {row['parent']} "
+        f"({row['problem']}) by {row['pixels']}px"
+        for row in offenders
+    )
+
+
+NARROW_FACTS = (
+    Fact(
+        label="Adult weight",
+        value="26-84 lb (12-38 kg)",
+        unit=None,
+        detail="Adults vary widely between subspecies and sexes.",
+        source=make_source(url="https://www.worldwildlife.org/species/giant-panda"),
+    ),
+    Fact(
+        label="Daily bamboo intake",
+        value="26-84",
+        unit="lb per day",
+        detail="WWF's range; other bodies measure different parts of the plant.",
+    ),
+    Fact(label="Wild population", value="1,864", unit="adults", detail="2014 census."),
+    Fact(label="Red List status", value="Vulnerable", unit=None, detail="IUCN, 2016."),
+    Fact(label="Hours spent eating", value="Up to 14 hours", unit="a day", detail=None),
+    Fact(label="Cub birth weight", value="3.5", unit="oz", detail="Blind and pink."),
+)
+
+VALUE_LINES_JS = """
+() => Array.from(document.querySelectorAll('.row__value')).map(el => {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const rects = Array.from(range.getClientRects())
+    .filter(r => r.width > 0.5 && r.height > 0.5);
+  const lines = [];
+  for (const r of rects.slice().sort((a, b) => a.top - b.top)) {
+    const line = lines.find(l => r.top < l.bottom - 1 && r.bottom > l.top + 1);
+    if (line) {
+      line.top = Math.min(line.top, r.top);
+      line.bottom = Math.max(line.bottom, r.bottom);
+    } else {
+      lines.push({top: r.top, bottom: r.bottom});
+    }
+  }
+  const head = el.closest('.row__head');
+  return {
+    text: el.innerText.replace(/\\s+/g, ' ').trim(),
+    lines: lines.length,
+    head_overflow: head ? head.scrollWidth - head.clientWidth : 0,
+    value_overflow: el.scrollWidth - el.clientWidth,
+  };
+})
+"""
+"""Lines are counted by clustering the range's client rects on vertical overlap,
+not by counting the rects. A value carries a small-font ``.row__unit`` span, so an
+unwrapped value already yields three rects at two different ``top`` coordinates;
+only overlap tells a second line from a smaller sibling on the same one."""
+
+
+@pytest.mark.parametrize("width_px", [1000, 640])
+@BROWSER_LOOP
+async def test_ledger_values_stay_on_one_line_inside_their_column(
+    chromium: Browser, width_px: int
+) -> None:
+    """The display size of a value is capped by the width of the column it sits in,
+    so narrowing the page shrinks the type instead of wrapping or overflowing it.
+
+    1000px puts each half-width column at about 410px. 640px is where the cap
+    starts carrying the page on its own: without it ``26-84 lb (12-38 kg)`` sets at
+    76px in a 269px column and breaks across three lines.
+    """
+    composition = await HtmlComposer().compose(
+        make_brief(options=RenderOptions(width_px=width_px)),
+        make_content(facts=NARROW_FACTS),
+        (),
+    )
+
+    async with laid_out(chromium, composition) as page:
+        values: list[dict[str, object]] = await page.evaluate(VALUE_LINES_JS)
+
+    assert len(values) == len(NARROW_FACTS), (
+        f"expected {len(NARROW_FACTS)} ledger values, measured {len(values)}"
+    )
+    for value in values:
+        assert int(value["head_overflow"]) <= 1, (  # type: ignore[call-overload]
+            f"{value['text']!r} overflows its column by "
+            f"{value['head_overflow']}px at a {width_px}px page"
+        )
+        assert int(value["value_overflow"]) <= 1, (  # type: ignore[call-overload]
+            f"{value['text']!r} overflows its own box by {value['value_overflow']}px"
+        )
+        assert value["lines"] == 1, (
+            f"{value['text']!r} wrapped onto {value['lines']} lines; a headline "
+            "figure is meant to shrink to fit, not break"
+        )

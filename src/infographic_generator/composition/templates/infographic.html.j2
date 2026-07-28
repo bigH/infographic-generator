@@ -1,20 +1,64 @@
 {#-
   Specimen-sheet layout. Ink masthead with the hero punched into it, a ledger of
-  statistics broken by inverted "patch" rows, prose set as side-heads, and an
-  attribution colophon. Rendered by an Environment with autoescape=True.
+  statistics set two to a line and broken by inverted "patch" rows, prose set as
+  side-heads, and an attribution colophon.
+
+  Rendered by an Environment with autoescape=True, which escapes for HTML and
+  *not* for CSS. So: nothing researched, scraped or user-supplied may be
+  interpolated into the <style> element or into a style="" attribute. The only
+  values that go there are numbers this package computed itself -- the page
+  width, the gutter, `figure.aspect`, `stat.fit` -- and the base64 font and image
+  payloads, whose alphabet cannot escape a CSS string.
 -#}
+{%- macro band(figures) -%}
+<section class="band gutter">
+  {% for figure in figures %}
+  <figure style="flex: {{ figure.aspect }} 1 0">
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{%- endmacro -%}
 <!doctype html>
 <html lang="{{ page.lang }}" dir="{{ page.direction }}" data-theme="{{ page.theme }}">
 <head>
 <meta charset="utf-8">
 <title>{{ page.title }}</title>
 <style>
+{% for face in page.fonts %}
+@font-face {
+  font-family: "{{ face.family }}";
+  font-style: {{ face.style }};
+  font-weight: {{ face.weight }};
+  font-display: block;
+  src: url({{ face.data_uri }}) format("woff2");
+}
+{% endfor %}
+
 :root {
   --w: {{ page.width_px }}px;
   --pad: {{ page.gutter_px }}px;
-  --display: "Superclarendon", "Rockwell", "Bookman Old Style", Georgia, serif;
-  --body: "Iowan Old Style", "Charter", "Bitstream Charter", "PT Serif", Georgia, serif;
-  --data: "Menlo", "SF Mono", "DejaVu Sans Mono", "Consolas", monospace;
+
+  /* Embedded faces first, then nothing but CSS generics. Naming a real family
+     here -- Georgia, Menlo, DejaVu Sans Mono -- would put the render back at the
+     mercy of what happens to be installed. The generics are only ever reached
+     for glyphs outside the embedded latin subsets. */
+  --display: "Ledger Slab", ui-serif, serif;
+  --body: "Ledger Text", ui-serif, serif;
+  --data: "Ledger Mono", ui-monospace, monospace;
+
+  /* One display ramp: eight rungs from 27px at a ratio of 1.23. Every large size
+     below picks a rung by role rather than inventing a number -- so not every rung
+     is in use at once, and adding a role means choosing one, not adding one. */
+  --s0: 27px;
+  --s1: 33px;
+  --s2: 41px;
+  --s3: 50px;
+  --s4: 62px;
+  --s5: 76px;
+  --s6: 94px;
+  --s7: 116px;
 
   --paper: #eceae2;
   --patch: #17150f;
@@ -47,15 +91,17 @@ body {
   background: var(--paper);
   color: var(--on-paper);
   font-family: var(--body);
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: 16.5px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 {% if page.min_height_px %}
 body { min-height: {{ page.min_height_px }}px; }
 {% endif %}
-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* Every image is constrained by CSS alone; the inline aspect-ratio governs its
+   height, so nothing here may set one. */
+img { display: block; width: 100%; height: auto; }
 li { list-style: none; }
 
 .gutter { padding-inline: var(--pad); }
@@ -74,6 +120,17 @@ li { list-style: none; }
 }
 .on-ink .tick { border-inline-start-color: var(--accent-patch); color: var(--dim-patch); }
 
+/* A display string is capped twice: --size is the editorial ceiling for its
+   length, --fit is what its column can actually hold. The smaller wins, so
+   narrowing the page shrinks type instead of wrapping it. */
+.fitted { font-size: min(var(--size), var(--fit)); }
+
+/* The display face defaults to old-style figures, which at 100px reads as a row
+   of digits at four different heights. Lining and tabular throughout. */
+.title, .row__value, .section__heading {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
 /* --- masthead ------------------------------------------------------ */
 .masthead {
   display: grid;
@@ -83,14 +140,15 @@ li { list-style: none; }
 }
 .masthead--flat { grid-template-columns: 1fr; }
 .masthead__text {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 44px;
-  min-height: 620px;
-  padding-block: 62px 46px;
+  justify-content: flex-end;
+  gap: 22px;
+  min-height: 430px;
+  padding-block: 54px 44px;
 }
-.masthead--flat .masthead__text { min-height: 0; padding-block: 76px 52px; }
+.masthead--flat .masthead__text { min-height: 0; padding-block: 68px 48px; }
 
 .title {
   font-family: var(--display);
@@ -99,30 +157,29 @@ li { list-style: none; }
   letter-spacing: -0.018em;
   text-wrap: balance;
 }
-.title--xl { font-size: 88px; }
-.title--l  { font-size: 72px; }
-.title--m  { font-size: 58px; }
-.title--s  { font-size: 46px; }
-.masthead--flat .title--xl { font-size: 104px; }
+.title--xl { --size: var(--s6); }
+.title--l  { --size: var(--s5); }
+.title--m  { --size: var(--s4); }
+.title--s  { --size: var(--s3); }
+.masthead--flat .title--xl { --size: var(--s7); }
 
 .subtitle {
-  margin-top: 26px;
-  max-width: 30ch;
-  font-size: 21px;
+  max-width: 34ch;
+  font-size: 20px;
   font-style: italic;
-  line-height: 1.36;
+  line-height: 1.34;
   color: var(--dim-patch);
 }
-.masthead--flat .subtitle { max-width: 56ch; }
-
-.index { display: flex; flex-wrap: wrap; gap: 9px 22px; }
+.masthead--flat .subtitle { max-width: 60ch; }
 
 .hero { position: relative; overflow: hidden; }
+/* The one deliberate crop on the page: the hero fills the masthead's height. */
+.hero img { height: 100%; object-fit: cover; }
 .hero__credit {
   position: absolute;
   inset-inline: 0;
   bottom: 0;
-  padding: 26px 18px 10px;
+  padding: 24px 16px 9px;
   background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
   color: #eeeade;
   font-family: var(--data);
@@ -135,27 +192,43 @@ li { list-style: none; }
 .lede {
   background: var(--patch);
   color: var(--on-patch);
-  padding-block: 40px 68px;
+  padding-block: 30px 40px;
 }
 .lede p {
-  max-width: 62ch;
+  max-width: 76ch;
   border-top: 1px solid var(--rule-patch);
-  padding-top: 34px;
+  padding-top: 24px;
   font-size: 24px;
-  line-height: 1.5;
+  line-height: 1.44;
 }
 
 /* --- ledger --------------------------------------------------------- */
-.ledger { padding-block: 4px 0; }
-
-.row {
+/* Two stats to a line. Patch rows and a trailing orphan span both columns; the
+   orphan spans so an odd count does not read as a mistake. */
+.ledger {
   display: grid;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(210px, 1.3fr) minmax(230px, 1.55fr);
-  gap: 34px;
-  align-items: baseline;
-  border-top: 1px solid var(--rule-paper);
-  padding-block: 30px 34px;
+  grid-template-columns: 1fr 1fr;
+  column-gap: var(--pad);
+  padding-inline: var(--pad);
 }
+.row {
+  border-top: 1px solid var(--rule-paper);
+  padding-block: 15px 20px;
+}
+/* A row that spans both columns has room to set its gloss beside the numeral
+   rather than under it, bottom-aligned with it. `full_width` decides the split;
+   `feature` decides the ink. */
+.row--full {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  column-gap: var(--pad);
+  align-items: end;
+}
+.row--full .row__detail { margin-top: 0; }
+/* The query container is the label-and-value stack, not the whole row, so a
+   value sized against it stays inside its own column however the row is split. */
+.row__head { container-type: inline-size; }
 .row__label {
   font-family: var(--data);
   font-size: 11px;
@@ -165,16 +238,17 @@ li { list-style: none; }
   color: var(--accent-paper);
 }
 .row__value {
+  margin-top: 6px;
   font-family: var(--display);
   font-weight: 700;
   line-height: 0.94;
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
 }
-.value--xl { font-size: 96px; }
-.value--l  { font-size: 72px; }
-.value--m  { font-size: 52px; }
-.value--s  { font-size: 40px; }
+.value--xl { --size: var(--s5); }
+.value--l  { --size: var(--s4); }
+.value--m  { --size: var(--s3); }
+.value--s  { --size: var(--s2); }
 .row__unit {
   font-family: var(--data);
   font-size: 0.3em;
@@ -183,41 +257,47 @@ li { list-style: none; }
   margin-inline-start: 0.34em;
   color: var(--dim-paper);
 }
-.row__detail { font-size: 15.5px; line-height: 1.55; color: var(--dim-paper); }
-.row__src { margin-top: 12px; }
+.row__detail {
+  margin-top: 12px;
+  max-width: 72ch;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--dim-paper);
+}
+.row__src { margin-top: 9px; }
 
+/* The feature row breaks the ledger's rhythm: full bleed and inverted. */
 .row--patch {
-  display: block;
   background: var(--patch);
   color: var(--on-patch);
   border-top: 0;
-  padding-block: 46px 48px;
+  margin-inline: calc(var(--pad) * -1);
+  padding-block: 30px 32px;
+  padding-inline: var(--pad);
 }
 .row--patch .row__label { color: var(--accent-patch); }
-.row--patch .row__value { margin-top: 16px; max-width: 18ch; }
-.row--patch .value--xl { font-size: 148px; }
-.row--patch .value--l  { font-size: 104px; }
-.row--patch .value--m  { font-size: 74px; }
-.row--patch .value--s  { font-size: 54px; }
+.row--patch .row__value { margin-top: 12px; }
+.row--patch .value--xl { --size: var(--s7); }
+.row--patch .value--l  { --size: var(--s6); }
+.row--patch .value--m  { --size: var(--s5); }
+.row--patch .value--s  { --size: var(--s4); }
 .row--patch .row__unit { color: var(--dim-patch); }
-.row--patch .row__detail {
-  margin-top: 30px;
-  columns: 2;
-  column-gap: 40px;
-  font-size: 15.5px;
-  color: var(--dim-patch);
-}
+.row--patch .row__detail { color: var(--dim-patch); }
 .row--patch .row__src { color: var(--dim-patch); }
 
 /* --- image bands ---------------------------------------------------- */
+/* Justified strip: each figure's flex-grow is its aspect ratio, so the widths
+   come out proportional and every image lands on the same height without a crop.
+   align-self keeps a tall caption from stretching its neighbour's image, and the
+   inner flex column keeps the caption inside the figure instead of over it. */
 .band {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 22px;
-  padding-block: 52px;
+  display: flex;
+  gap: 18px;
+  padding-block: 26px;
 }
+.band figure { display: flex; flex-direction: column; align-self: start; min-width: 0; }
 .band figcaption {
-  margin-top: 11px;
+  margin-top: 10px;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.05em;
@@ -226,55 +306,60 @@ li { list-style: none; }
 }
 
 /* --- narrative ------------------------------------------------------ */
-.essay { padding-block: 14px 8px; }
+.essay { padding-block: 10px 6px; }
 .section {
   display: grid;
-  grid-template-columns: minmax(180px, 300px) 1fr;
-  gap: 46px;
+  grid-template-columns: minmax(170px, 280px) 1fr;
+  gap: 40px;
   border-top: 1px solid var(--rule-paper);
-  padding-block: 42px 46px;
+  padding-block: 24px 28px;
 }
 .section__heading {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 29px;
+  font-size: var(--s0);
   line-height: 1.08;
   letter-spacing: -0.01em;
   border-inline-start: 2px solid var(--accent-paper);
   padding-inline-start: 14px;
 }
-.section__body { max-width: 66ch; font-size: 18px; line-height: 1.64; }
+.section__body { max-width: 78ch; }
+.section__src { margin-top: 12px; }
 
 /* --- apparatus ------------------------------------------------------ */
-.apparatus { border-top: 1px solid var(--rule-paper); padding-block: 40px 52px; }
-.apparatus__label { margin-bottom: 24px; }
-.refs { columns: 2; column-gap: 46px; }
-.refs li { break-inside: avoid; margin-bottom: 18px; font-size: 14px; line-height: 1.45; }
+.apparatus { border-top: 1px solid var(--rule-paper); padding-block: 28px 34px; }
+.apparatus__label { margin-bottom: 18px; }
+.refs { columns: 2; column-gap: 42px; }
+.refs li { break-inside: avoid; margin-bottom: 14px; font-size: 13.5px; line-height: 1.4; }
 .refs__meta {
   display: block;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.05em;
   color: var(--dim-paper);
-  margin-top: 4px;
+  margin-top: 3px;
   overflow-wrap: anywhere;
 }
 
 /* --- colophon ------------------------------------------------------- */
+/* Legally load-bearing: this is where CC BY / BY-SA attribution is discharged,
+   in a PNG where a link would be useless. It stays big enough to read and to
+   retype. */
 .colophon {
   background: var(--patch);
   color: var(--on-patch);
-  padding-block: 44px 52px;
+  padding-block: 32px 36px;
 }
-.colophon__label { margin-bottom: 26px; }
-.credits { display: grid; gap: 16px; }
-.credit {
+.colophon__label { margin-bottom: 20px; }
+.credits {
   display: grid;
-  grid-template-columns: minmax(120px, 0.5fr) 1fr;
-  gap: 10px 30px;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 14px 36px;
+}
+.credit {
   border-top: 1px solid var(--rule-patch);
-  padding-top: 14px;
-  font-size: 13.5px;
+  padding-top: 12px;
+  font-size: 13px;
   line-height: 1.45;
 }
 .credit__license {
@@ -284,14 +369,17 @@ li { list-style: none; }
   text-transform: uppercase;
   color: var(--accent-patch);
 }
-.credit__adapted { display: block; color: var(--dim-patch); text-transform: none; letter-spacing: 0.04em; }
 .credit__work { color: var(--on-patch); }
 .credit__author { color: var(--dim-patch); }
+.credit__adapted { display: block; color: var(--dim-patch); text-transform: none; letter-spacing: 0.04em; }
+/* text-transform is inherited, and a licence URI has to be transcribed by hand
+   out of the PNG -- uppercasing it would break it. */
 .credit__url {
   display: block;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.03em;
+  text-transform: none;
   color: var(--dim-patch);
   margin-top: 3px;
   overflow-wrap: anywhere;
@@ -301,26 +389,20 @@ li { list-style: none; }
 <body>
 <div class="rule"></div>
 
-<header class="masthead on-ink {{ 'masthead--split' if page.hero else 'masthead--flat' }}">
+<header class="masthead on-ink{{ ' masthead--flat' if not page.hero else '' }}">
   <div class="masthead__text gutter">
-    <div>
-      <h1 class="title title--{{ page.title_scale }}">{{ page.title }}</h1>
-      {% if page.subtitle %}
-      <p class="subtitle">{{ page.subtitle }}</p>
-      {% endif %}
-    </div>
-    {% if page.keywords %}
-    <ul class="index">
-      {% for keyword in page.keywords %}
-      <li class="tick">{{ keyword }}</li>
-      {% endfor %}
-    </ul>
+    <h1 class="title fitted title--{{ page.title_scale }}" style="--fit: {{ page.title_fit }}">{{ page.title }}</h1>
+    {% if page.subtitle %}
+    <p class="subtitle">{{ page.subtitle }}</p>
     {% endif %}
   </div>
   {% if page.hero %}
   <figure class="hero">
     <img src="{{ page.hero.data_uri }}" alt="{{ page.hero.alt }}">
+    {# No caption means nothing to darken the image for. #}
+    {% if page.hero.caption %}
     <figcaption class="hero__credit">{{ page.hero.caption }}</figcaption>
+    {% endif %}
   </figure>
   {% endif %}
 </header>
@@ -334,10 +416,12 @@ li { list-style: none; }
 {% for block in page.ledger %}
 <section class="ledger">
   {% for stat in block %}
-  <div class="row gutter{{ ' row--patch on-ink' if stat.feature }}">
-    <p class="row__label">{{ stat.label }}</p>
-    <p class="row__value value--{{ stat.scale }}">{{ stat.value }}
-      {%- if stat.unit %}<span class="row__unit">{{ stat.unit }}</span>{% endif %}</p>
+  <div class="row{{ ' row--full' if stat.full_width }}{{ ' row--patch on-ink' if stat.feature }}">
+    <div class="row__head">
+      <p class="row__label">{{ stat.label }}</p>
+      <p class="row__value fitted value--{{ stat.scale }}" style="--fit: {{ stat.fit }}">{{ stat.value }}
+        {%- if stat.unit %}<span class="row__unit">{{ stat.unit }}</span>{% endif %}</p>
+    </div>
     <div class="row__detail">
       {% if stat.detail %}<p>{{ stat.detail }}</p>{% endif %}
       {% if stat.attribution %}<p class="row__src tick">{{ stat.attribution }}</p>{% endif %}
@@ -346,26 +430,12 @@ li { list-style: none; }
   {% endfor %}
 </section>
 {% if loop.first and page.band %}
-<section class="band gutter">
-  {% for figure in page.band %}
-  <figure>
-    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
-    <figcaption>{{ figure.caption }}</figcaption>
-  </figure>
-  {% endfor %}
-</section>
+{{ band(page.band) }}
 {% endif %}
 {% endfor %}
 
 {% if not page.ledger and page.band %}
-<section class="band gutter">
-  {% for figure in page.band %}
-  <figure>
-    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
-    <figcaption>{{ figure.caption }}</figcaption>
-  </figure>
-  {% endfor %}
-</section>
+{{ band(page.band) }}
 {% endif %}
 
 {% if page.sections %}
@@ -373,21 +443,15 @@ li { list-style: none; }
   {% for section in page.sections %}
   <section class="section gutter">
     <h2 class="section__heading">{{ section.heading }}</h2>
-    <div class="section__body"><p>{{ section.body }}</p></div>
+    <div class="section__body">
+      <p>{{ section.body }}</p>
+      {% if section.attributions %}
+      <p class="section__src tick">{{ section.attributions | join(' · ') }}</p>
+      {% endif %}
+    </div>
   </section>
   {% endfor %}
 </div>
-{% endif %}
-
-{% if page.coda %}
-<section class="band gutter">
-  {% for figure in page.coda %}
-  <figure>
-    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
-    <figcaption>{{ figure.caption }}</figcaption>
-  </figure>
-  {% endfor %}
-</section>
 {% endif %}
 
 {% if page.references %}
