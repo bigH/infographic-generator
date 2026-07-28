@@ -106,8 +106,8 @@ When the real AI agents get written:
 
 ## Gotchas
 
-- **Image licences are real.** Three of the five panda images are CC BY / CC BY-SA. Attribution must be *rendered visibly in the output*, not just stored in JSON. `ImageCredit.modified` exists because CC BY-SA requires stating adaptation.
-- **Open question:** whether a PNG composed from CC BY-SA images inherits ShareAlike. Unresolved — see `docs/plan.md`.
+- **Image licences are real.** Four of the five panda images carry attribution obligations — two `CC-BY-SA-4.0`, two `CC-BY-2.0`, plus one `CC0-1.0` that does not. Attribution must be *rendered visibly in the output*, not just stored in JSON. `ImageCredit.modified` exists because CC BY-SA requires stating adaptation, and it is `true` on all five: the originals are 2048–6000 px and the fixtures are 1600 px. Trust `credits.json` over this paragraph — the data is authoritative, prose drifts.
+- **Open question:** whether a PNG composed from the two `CC-BY-SA-4.0` images inherits ShareAlike. Unresolved, and it needs a human — see `docs/plan.md`.
 - **A poisoned image is waiting on Wikimedia Commons.** `File:Panda velká.jpg` is tagged CC BY-SA 4.0 "own work" but its EXIF credits `naturepl.com / LYNN M. STONE / WWF`. It's the best-looking forest shot in the pool and will tempt anyone who goes looking. Don't use it. Verify licences on the file description page, never from the filename.
 - **Daily bamboo intake is genuinely contested** across sources (WWF 12–38 kg, Smithsonian 70–100 lb, IUCN up to 12.5 kg — they measure different plant parts). `facts.json` uses WWF's range and says so in `detail`. A future "correction" here is probably not a correction.
 
