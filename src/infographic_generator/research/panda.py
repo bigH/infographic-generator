@@ -25,11 +25,16 @@ from infographic_generator.core.models import (
 if TYPE_CHECKING:
     from infographic_generator.core.ports import Researcher
 
-# Repo-root ``assets/`` (research -> infographic_generator -> src -> root), resolved from
-# ``__file__`` not CWD; excluded from the wheel, so this needs the editable install we use.
-PANDA_FACTS: Final[Path] = (
-    Path(__file__).resolve().parents[3] / "assets" / "panda" / "facts.json"
-)
+
+def _panda_asset_dir() -> Path:
+    """``assets/panda``: bundled inside the wheel, or at the repo root in a checkout."""
+    package_root = Path(__file__).resolve().parents[1]
+    repo_root = package_root.parents[1]
+    bundled = package_root / "assets" / "panda"
+    return bundled if bundled.is_dir() else repo_root / "assets" / "panda"
+
+
+PANDA_FACTS: Final[Path] = _panda_asset_dir() / "facts.json"
 
 
 class _SourceEntry(TypedDict):

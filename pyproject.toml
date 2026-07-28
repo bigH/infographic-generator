@@ -22,6 +22,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/infographic_generator"]
 
+# The stub stages read their fixtures from the repo-root ``assets/``, which the tests
+# also point at. Ship a copy inside the package so an installed wheel finds them too.
+[tool.hatch.build.targets.wheel.force-include]
+"assets" = "infographic_generator/assets"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",

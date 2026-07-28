@@ -30,9 +30,16 @@ MAX_IMAGES: Final[int] = 6
 
 _LOG: Final = logging.getLogger(__name__)
 
-# ``assets/`` lives at the repo root, outside the package and out of the wheel, so
-# this walk only resolves because the project is installed editable.
-_ASSET_DIR: Final[Path] = Path(__file__).resolve().parents[3] / "assets" / "panda"
+
+def _panda_asset_dir() -> Path:
+    """``assets/panda``: bundled inside the wheel, or at the repo root in a checkout."""
+    package_root = Path(__file__).resolve().parents[1]
+    repo_root = package_root.parents[1]
+    bundled = package_root / "assets" / "panda"
+    return bundled if bundled.is_dir() else repo_root / "assets" / "panda"
+
+
+_ASSET_DIR: Final[Path] = _panda_asset_dir()
 _CREDITS_PATH: Final[Path] = _ASSET_DIR / "credits.json"
 
 _PUBLISHER: Final[str] = "Wikimedia Commons"
