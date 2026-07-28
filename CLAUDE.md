@@ -15,6 +15,27 @@ uv run pytest                        # must stay green
 uv run infographic "a panda" -o out.png
 ```
 
+## Working together — we all push to main
+
+No branches, no PRs. Everyone commits and pushes straight to `main`. That works fine here because the ownership zones below mean we're almost never editing the same file — but it puts the burden on you not to clobber anyone.
+
+**Before every push:**
+
+```bash
+git pull --rebase origin main   # replay your work on top of theirs
+uv run pytest                   # rebasing can break things that merged cleanly
+git push
+```
+
+**Never:**
+
+- `git push --force` or `--force-with-lease` to `main`. If your push is rejected, someone pushed first — rebase and try again. Forcing deletes their commit.
+- `git reset --hard` / `git rebase` on commits already pushed. Rewriting shared history breaks everyone else's clone.
+- `git checkout .` or `git restore` across the whole tree to "clean up" — you'll take out someone else's uncommitted work if you're sharing a machine.
+- Resolve a conflict in `core/` or `pyproject.toml` by picking your side. Those are shared contracts — ask first.
+
+**Do:** commit small and push often. A ten-minute-old commit rebases cleanly; a three-day branch does not. Pull before you start working, not just before you push.
+
 ## Pipeline
 
 ```
