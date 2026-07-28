@@ -1,0 +1,15 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="timeline">
+  {% if hero_image_src %}<img class="timeline__hero" src="{{ hero_image_src }}" alt="{{ slots.hero_image.alt_text or '' }}">{% endif %}
+  <div class="timeline__title">{{ slots.title }}</div>
+  <div class="timeline__events">
+    {% for event in slots.events %}
+    <div class="timeline__event">
+      <div class="timeline__event-date">{{ event.date }}</div>
+      <div class="timeline__event-label">{{ event.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

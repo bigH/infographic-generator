@@ -1,0 +1,23 @@
+{
+  "topic": "Biggest risks facing the Q3 platform migration",
+  "audience": "engineering leadership",
+  "learning_preference": "text_heavy",
+  "headline": "Top Risks Before We Cut Over",
+  "summary": "A prioritized view of the risks most likely to derail the Q3 platform migration if left unaddressed.",
+  "facts": [],
+  "key_points": [
+    "No rollback plan tested beyond staging",
+    "Database migration script unverified against production-scale data",
+    "Two on-call engineers unfamiliar with the new infrastructure",
+    "Customer-facing API contract changes not yet communicated",
+    "Load testing incomplete for peak traffic scenarios"
+  ],
+  "steps": [],
+  "comparisons": [],
+  "quotes": [],
+  "timeline_events": [],
+  "tags": ["engineering", "risk", "migration"],
+  "sources": [
+    {"url": "https://example.com/migration-risk-register", "title": "Q3 Migration Risk Register"}
+  ]
+}

@@ -1,0 +1,16 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="quote-spotlight">
+  {% if background_image_src %}<img class="quote-spotlight__bg" src="{{ background_image_src }}" alt="{{ slots.background_image.alt_text or '' }}">{% endif %}
+  <div class="quote-spotlight__content">
+    <div class="quote-spotlight__quote">&ldquo;{{ slots.quote_text }}&rdquo;</div>
+    <div class="quote-spotlight__attribution">&mdash; {{ slots.attribution }}</div>
+    {% if slots.supporting_stat %}
+    <div class="quote-spotlight__stat">
+      <div class="quote-spotlight__stat-value">{{ slots.supporting_stat.value }}</div>
+      <div class="quote-spotlight__stat-label">{{ slots.supporting_stat.label }}</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

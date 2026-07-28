@@ -1,0 +1,9 @@
+.comparison { display: flex; flex-direction: column; height: 100%; padding: 64px; }
+.comparison__title { font-size: 48px; font-weight: 800; margin-bottom: 32px; text-align: center; }
+.comparison__columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+.comparison__col-img { width: 100%; height: 180px; object-fit: cover; border-radius: 20px; }
+.comparison__col-label { font-size: 28px; font-weight: 700; text-align: center; margin-top: 12px; }
+.comparison__rows { flex: 1; display: flex; flex-direction: column; gap: 16px; }
+.comparison__row { display: grid; grid-template-columns: 1fr 1.2fr 1fr; align-items: center; background: #f4f4f8; border-radius: 16px; padding: 20px 24px; }
+.comparison__row-left, .comparison__row-right { font-size: 20px; text-align: center; }
+.comparison__row-label { font-size: 16px; font-weight: 700; color: #555; text-align: center; }

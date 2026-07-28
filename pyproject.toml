@@ -1,0 +1,32 @@
+[project]
+name = "infographic-agent"
+version = "0.1.0"
+description = "Compiles search-agent content and image-agent output into a rendered infographic PNG."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "jinja2>=3.1",
+    "playwright>=1.45",
+    "anthropic>=0.34",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pillow>=10.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "llm: real-API smoke tests, skipped by default",
+]
+addopts = "-m \"not llm\""
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["infographic_agent*"]

@@ -1,0 +1,23 @@
+{
+  "topic": "Setting up a home espresso station",
+  "audience": "home coffee enthusiasts",
+  "learning_preference": "image_heavy",
+  "headline": "Your First Perfect Shot",
+  "summary": "A simple, repeatable process for pulling a consistent espresso shot at home, from grinding to tamping to extraction.",
+  "facts": [],
+  "key_points": [],
+  "steps": [
+    "Grind 18g of fresh beans to a fine, even consistency",
+    "Distribute the grounds evenly in the portafilter basket",
+    "Tamp firmly and level with about 30 lbs of pressure",
+    "Lock the portafilter in and start the shot immediately",
+    "Aim for a 25-30 second extraction yielding 36g of espresso"
+  ],
+  "comparisons": [],
+  "quotes": [],
+  "timeline_events": [],
+  "tags": ["coffee", "how-to", "espresso"],
+  "sources": [
+    {"url": "https://example.com/espresso-basics", "title": "Espresso Basics"}
+  ]
+}

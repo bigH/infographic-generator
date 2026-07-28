@@ -1,0 +1,23 @@
+{
+  "topic": "Acme Cloud's product launch history",
+  "audience": "prospective enterprise customers",
+  "learning_preference": "balanced",
+  "headline": "Six Years of Acme Cloud",
+  "summary": "From a small storage tool to a full enterprise platform, Acme Cloud's roadmap reflects steady, deliberate growth.",
+  "facts": [],
+  "key_points": [],
+  "steps": [],
+  "comparisons": [],
+  "quotes": [],
+  "timeline_events": [
+    {"date": "2019", "label": "Acme Cloud launches as a simple object storage service"},
+    {"date": "2021", "label": "Adds managed compute and the first enterprise SLA tier"},
+    {"date": "2022", "label": "Passes 10,000 paying customers worldwide"},
+    {"date": "2023", "label": "Launches multi-region replication and SOC 2 compliance"},
+    {"date": "2025", "label": "Introduces built-in AI workload orchestration"}
+  ],
+  "tags": ["cloud", "product", "history"],
+  "sources": [
+    {"url": "https://acme.example.com/about/history", "title": "Acme Cloud company history"}
+  ]
+}

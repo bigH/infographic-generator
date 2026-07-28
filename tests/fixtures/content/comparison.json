@@ -1,0 +1,22 @@
+{
+  "topic": "Cloud hosting vs. on-premise infrastructure",
+  "audience": "IT decision-makers at mid-size companies",
+  "learning_preference": "text_heavy",
+  "headline": "Cloud vs. On-Prem: What Actually Changes",
+  "summary": "Cloud hosting trades upfront capital cost for operational flexibility, while on-prem trades flexibility for long-term control.",
+  "facts": [],
+  "key_points": [],
+  "steps": [],
+  "comparisons": [
+    {"label": "Upfront cost", "a": "Low — pay-as-you-go", "b": "High — hardware purchase required"},
+    {"label": "Scaling time", "a": "Minutes", "b": "Weeks to months"},
+    {"label": "Maintenance burden", "a": "Handled by provider", "b": "Owned by internal IT team"},
+    {"label": "Data control", "a": "Shared responsibility model", "b": "Full physical control"}
+  ],
+  "quotes": [],
+  "timeline_events": [],
+  "tags": ["infrastructure", "cloud", "it-strategy"],
+  "sources": [
+    {"url": "https://example.com/cloud-vs-onprem", "title": "Cloud vs On-Prem Guide"}
+  ]
+}

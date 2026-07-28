@@ -1,0 +1,7 @@
+{
+  "topic": "Cloud hosting vs. on-premise infrastructure",
+  "candidates": [
+    {"id": "img-1", "path": "tests/fixtures/images/assets/comparison-1.jpg", "alt_text": "Cloud data center exterior with abstract network overlay", "tags": ["cloud", "network"], "width": 1400, "height": 933},
+    {"id": "img-2", "path": "tests/fixtures/images/assets/comparison-2.jpg", "alt_text": "On-premise server room with visible hardware racks", "tags": ["on-prem", "servers"], "width": 1400, "height": 933}
+  ]
+}

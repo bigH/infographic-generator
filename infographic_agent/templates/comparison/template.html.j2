@@ -1,0 +1,25 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="comparison">
+  <div class="comparison__title">{{ slots.title }}</div>
+  <div class="comparison__columns">
+    <div>
+      {% if left_image_src %}<img class="comparison__col-img" src="{{ left_image_src }}" alt="{{ slots.left_image.alt_text or '' }}">{% endif %}
+      <div class="comparison__col-label">{{ slots.left_label }}</div>
+    </div>
+    <div>
+      {% if right_image_src %}<img class="comparison__col-img" src="{{ right_image_src }}" alt="{{ slots.right_image.alt_text or '' }}">{% endif %}
+      <div class="comparison__col-label">{{ slots.right_label }}</div>
+    </div>
+  </div>
+  <div class="comparison__rows">
+    {% for row in slots.rows %}
+    <div class="comparison__row">
+      <div class="comparison__row-left">{{ row.left }}</div>
+      <div class="comparison__row-label">{{ row.label }}</div>
+      <div class="comparison__row-right">{{ row.right }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

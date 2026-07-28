@@ -1,0 +1,10 @@
+.stat-grid { display: flex; flex-direction: column; height: 100%; padding: 64px; }
+.stat-grid__hero { width: 100%; height: 280px; object-fit: cover; border-radius: 24px; margin-bottom: 32px; }
+.stat-grid__title { font-size: 52px; font-weight: 800; line-height: 1.1; }
+.stat-grid__subtitle { font-size: 24px; color: #555; margin-top: 12px; margin-bottom: 40px; }
+.stat-grid__stats { flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: min-content; gap: 24px; align-content: center; }
+.stat-grid__stat { background: #f4f4f8; border-radius: 20px; padding: 36px 32px; display: flex; flex-direction: column; justify-content: center; border-left: 6px solid #2b3a67; }
+.stat-grid__stat-value { font-size: 48px; font-weight: 800; color: #2b3a67; line-height: 1; }
+.stat-grid__stat-label { font-size: 19px; font-weight: 600; margin-top: 10px; }
+.stat-grid__stat-detail { font-size: 15px; color: #666; margin-top: 4px; }
+.stat-grid__footer { font-size: 13px; color: #999; margin-top: 24px; }

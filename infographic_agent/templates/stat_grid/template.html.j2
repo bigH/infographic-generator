@@ -1,0 +1,18 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="stat-grid">
+  {% if hero_image_src %}<img class="stat-grid__hero" src="{{ hero_image_src }}" alt="{{ slots.hero_image.alt_text or '' }}">{% endif %}
+  <div class="stat-grid__title">{{ slots.title }}</div>
+  {% if slots.subtitle %}<div class="stat-grid__subtitle">{{ slots.subtitle }}</div>{% endif %}
+  <div class="stat-grid__stats">
+    {% for stat in slots.stats %}
+    <div class="stat-grid__stat">
+      <div class="stat-grid__stat-value">{{ stat.value }}</div>
+      <div class="stat-grid__stat-label">{{ stat.label }}</div>
+      {% if stat.detail %}<div class="stat-grid__stat-detail">{{ stat.detail }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% if slots.footer_source %}<div class="stat-grid__footer">{{ slots.footer_source }}</div>{% endif %}
+</div>
+{% endblock %}

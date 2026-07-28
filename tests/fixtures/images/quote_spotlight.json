@@ -1,0 +1,7 @@
+{
+  "topic": "Innovation culture at Bell Labs",
+  "candidates": [
+    {"id": "img-1", "path": "tests/fixtures/images/assets/quote_spotlight-1.jpg", "alt_text": "Dim, moody photo of a mid-century research laboratory", "tags": ["lab", "history", "background"], "width": 1600, "height": 2000},
+    {"id": "img-2", "path": "tests/fixtures/images/assets/quote_spotlight-2.jpg", "alt_text": "Chalkboard covered in equations", "tags": ["research", "ideas"], "width": 1600, "height": 1067}
+  ]
+}

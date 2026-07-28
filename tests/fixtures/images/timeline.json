@@ -1,0 +1,7 @@
+{
+  "topic": "Acme Cloud's product launch history",
+  "candidates": [
+    {"id": "img-1", "path": "tests/fixtures/images/assets/timeline-1.jpg", "alt_text": "Acme Cloud office exterior", "tags": ["office", "brand", "hero"], "width": 1600, "height": 1000},
+    {"id": "img-2", "path": "tests/fixtures/images/assets/timeline-2.jpg", "alt_text": "Server rack in a data center", "tags": ["infrastructure", "servers"], "width": 1400, "height": 933}
+  ]
+}

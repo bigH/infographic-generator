@@ -1,0 +1,22 @@
+{
+  "topic": "Global renewable energy adoption",
+  "audience": "corporate sustainability officers",
+  "learning_preference": "text_heavy",
+  "headline": "Renewables Are Outpacing Every Forecast",
+  "summary": "Solar and wind capacity additions hit record highs in 2025, driven by falling costs and policy incentives across major economies.",
+  "facts": [
+    {"label": "Global solar capacity added in 2025", "value": "480 GW", "detail": "up 32% year over year"},
+    {"label": "Share of new power capacity from renewables", "value": "92%", "detail": "highest on record"},
+    {"label": "Average cost of utility-scale solar", "value": "$0.031/kWh", "detail": "down from $0.045 in 2022"},
+    {"label": "Countries with net-zero targets", "value": "140+", "detail": "covering 88% of global emissions"}
+  ],
+  "key_points": [],
+  "steps": [],
+  "comparisons": [],
+  "quotes": [],
+  "timeline_events": [],
+  "tags": ["energy", "climate", "sustainability"],
+  "sources": [
+    {"url": "https://www.iea.org/reports/renewables-2025", "title": "IEA Renewables 2025"}
+  ]
+}

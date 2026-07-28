@@ -1,0 +1,7 @@
+{
+  "topic": "Biggest risks facing the Q3 platform migration",
+  "candidates": [
+    {"id": "img-1", "path": "tests/fixtures/images/assets/ranked_list-1.jpg", "alt_text": "Engineers reviewing a dashboard of system alerts", "tags": ["engineering", "risk", "hero"], "width": 1600, "height": 900},
+    {"id": "img-2", "path": "tests/fixtures/images/assets/ranked_list-2.jpg", "alt_text": "Warning icon overlay on a network diagram", "tags": ["risk", "warning"], "width": 1200, "height": 900}
+  ]
+}

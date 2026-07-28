@@ -1,0 +1,9 @@
+{
+  "topic": "Setting up a home espresso station",
+  "candidates": [
+    {"id": "img-1", "path": "tests/fixtures/images/assets/process_flow-1.jpg", "alt_text": "Espresso machine pulling a shot into a cup", "tags": ["espresso", "hero"], "width": 1200, "height": 1500},
+    {"id": "img-2", "path": "tests/fixtures/images/assets/process_flow-2.jpg", "alt_text": "Close-up of freshly ground coffee in a portafilter", "tags": ["coffee", "grind"], "width": 1200, "height": 900},
+    {"id": "img-3", "path": "tests/fixtures/images/assets/process_flow-3.jpg", "alt_text": "Hand tamping espresso grounds", "tags": ["tamping"], "width": 1200, "height": 900},
+    {"id": "img-4", "path": "tests/fixtures/images/assets/process_flow-4.jpg", "alt_text": "Finished espresso shot with crema", "tags": ["espresso", "result"], "width": 1200, "height": 900}
+  ]
+}

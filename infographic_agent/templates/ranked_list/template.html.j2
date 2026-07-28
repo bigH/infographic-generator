@@ -1,0 +1,16 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="ranked-list">
+  {% if hero_image_src %}<img class="ranked-list__hero" src="{{ hero_image_src }}" alt="{{ slots.hero_image.alt_text or '' }}">{% endif %}
+  <div class="ranked-list__title">{{ slots.title }}</div>
+  <div class="ranked-list__items">
+    {% for item in slots.items %}
+    <div class="ranked-list__item">
+      <div class="ranked-list__rank">#{{ loop.index }}</div>
+      <div class="ranked-list__item-label">{{ item.label }}</div>
+      <div class="ranked-list__item-value">{{ item.value }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

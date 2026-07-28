@@ -1,0 +1,15 @@
+{% extends "_base.html.j2" %}
+{% block content %}
+<div class="process-flow">
+  {% if hero_image_src %}<img class="process-flow__hero" src="{{ hero_image_src }}" alt="{{ slots.hero_image.alt_text or '' }}">{% endif %}
+  <div class="process-flow__title">{{ slots.title }}</div>
+  <div class="process-flow__steps">
+    {% for step in slots.steps %}
+    <div class="process-flow__step">
+      <div class="process-flow__step-num">{{ loop.index }}</div>
+      <div class="process-flow__step-label">{{ step }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

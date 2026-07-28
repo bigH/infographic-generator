@@ -1,0 +1,8 @@
+{
+  "topic": "Global renewable energy adoption",
+  "candidates": [
+    {"id": "img-1", "path": "tests/fixtures/images/assets/stat_grid-1.jpg", "alt_text": "Solar panel field at sunset", "tags": ["solar", "energy", "hero"], "width": 1600, "height": 900},
+    {"id": "img-2", "path": "tests/fixtures/images/assets/stat_grid-2.jpg", "alt_text": "Wind turbines on a hillside", "tags": ["wind", "energy"], "width": 1600, "height": 1067},
+    {"id": "img-3", "path": "tests/fixtures/images/assets/stat_grid-3.jpg", "alt_text": "Bar chart showing renewable growth", "tags": ["chart", "data"], "width": 1200, "height": 900}
+  ]
+}
