@@ -776,18 +776,30 @@ def _unit_width(unit: str | None) -> float:
 _RANK_LADDER: Final[tuple[Scale, ...]] = (Scale.XL, Scale.XL, Scale.L, Scale.M, Scale.S)
 """The rung each rank's figure earns, by ordinal; past the end, the last rung.
 
-Read against ``ranked_list.css``, which spends the ramp twice: rank 1 is the lead
-row and its ``.value--*`` classes resolve two rungs higher than everyone else's. So
-this ladder renders as ``76 50 41 33 27 27 ...`` px, not as four sizes -- the lead
-override is what buys the fifth. Non-increasing because the first entry is the
-highest ``Scale`` and the lead's rungs sit above the ordinary ones for every
-``Scale``, which together are why rank 1 cannot come out smaller than rank 2.
+A **ceiling**, and only that: ``ranked_list.css`` sets the figure to
+``max(19px, min(--size, --fit))``, so what a rank is finally set at is this rung or
+the width-derived cap from :func:`_descending_caps`, whichever is smaller. Do not read
+the px below as what the page shows -- read them as what it will not exceed.
 
-Five entries for a page that may carry any number of facts: a ranking is a podium
-and a tail. Past fifth the figures stop stepping down and settle on ``--s0``, which
-is still 1.64x the 16.5px prose they headline -- there is no rung below it, and
-inventing one to keep a twentieth place visibly smaller than a nineteenth would
-trade legibility for a distinction nobody reads.
+Read against ``ranked_list.css``, which spends the ramp twice: rank 1 is the lead row
+and its ``.value--*`` classes resolve two rungs higher than everyone else's. So this
+ladder ceilings at ``76 50 41 33 27 27 ...`` px, five sizes off a four-member
+``Scale`` -- the lead override is what buys the fifth. Non-increasing because the first
+entry is the highest ``Scale`` and the lead's rungs sit above the ordinary ones for
+every ``Scale``, which together are why rank 1 cannot come out smaller than rank 2.
+
+Where the ceiling actually binds, measured on the real ten-fact content: at 1200px and
+at 640px -- where the row stacks and the figure is measured against the whole 564px
+content box -- every rank renders at its rung exactly, ``76 50 41 33 27 27 27 27 27
+27``. At 1000px the cap is tighter on two of them and the column reads ``67.48 50
+35.50 33 27 27 27 27 27 27``. Before the row learned to stack, the caps erased the
+ladder outright at 640px: ``40.43 40.43 21.27 x5 19.26 x3``.
+
+Five entries for a page that may carry any number of facts: a ranking is a podium and
+a tail. Past fifth the figures stop stepping down and settle on ``--s0``, which is
+still 1.64x the 16.5px prose they headline and 2.45x the 11px label beside them --
+there is no rung below it, and inventing one to keep a twentieth place visibly smaller
+than a nineteenth would trade legibility for a distinction nobody reads.
 """
 
 

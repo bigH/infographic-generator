@@ -2701,7 +2701,9 @@ KHMER_WRAP_WIDTH_PX: Final = 640
 """The narrowest page the suite exercises, so the Khmer run has to wrap somewhere.
 
 At the 1200px default a five-word sentence fits on one line in every body, and a fence
-that cannot observe a wrap cannot tell a kept boundary from an inert one."""
+that cannot observe a wrap cannot tell a kept boundary from an inert one. Narrowest is
+necessary and not sufficient: how long the run has to be for the wrap to happen at all
+is :data:`KHMER_CLAUSES`."""
 
 KHMER_WORDS: Final = (
     "ខ្លាឃ្មុំផេនដា",
@@ -2717,9 +2719,30 @@ ZWSP is the *only* thing that can break this run -- which makes the wrap half of
 claim measurable rather than incidental."""
 
 
+KHMER_CLAUSES: Final = 3
+"""How many times the clause repeats, so the run wraps in the *roomiest* column.
+
+One clause was enough while every body squeezed its prose at 640px, and it stopped
+being enough the moment one of them stopped: ``ranked_list`` now stacks its rows and
+its side-heads below 820px, which took ``.section__body`` from a 244px track to the
+full 564px and ``.rank__label``/``.rank__detail`` from 241px to 502px. Measured on one
+clause after that change: all three ZWSP-bearing elements set on a single line and
+``wrapped`` came back 0, so the cell failed closed exactly as its last assertion
+promises -- correctly, because it could no longer tell a kept boundary from an inert
+one.
+
+Three rather than two, for margin rather than for the count. Two already wraps all
+three elements in all three bodies, but its worst case is a 550px longest line in a
+564px box: 14px, which is one layout tweak away from being nothing. Three sets the
+same elements on 2-4 lines with the run half again as long as the widest column any
+body gives it at 640px. Raising this can only make the wrap more observable, never
+less, and ``boundaries >= len(KHMER_WORDS) - 1`` stays true because there are strictly
+more boundaries."""
+
+
 def khmer_content() -> ResearchContent:
     """Correct Khmer prose in every field a body renders as a sentence."""
-    sentence = ZWSP.join(KHMER_WORDS)
+    sentence = ZWSP.join(KHMER_WORDS * KHMER_CLAUSES)
     return make_content(
         title="ខ្លាឃ្មុំផេនដា",
         facts=(
@@ -4654,7 +4677,8 @@ RANK_FIGURE_JS: Final = """
 () => Array.from(document.querySelectorAll('.rank')).map((row, index) => {
   const value = row.querySelector('.rank__value');
   const ordinal = row.querySelector('.rank__ordinal');
-  if (value === null || ordinal === null) { return null; }
+  const label = row.querySelector('.rank__label');
+  if (value === null || ordinal === null || label === null) { return null; }
   const style = getComputedStyle(value);
   return {
     position: index + 1,
@@ -4663,13 +4687,16 @@ RANK_FIGURE_JS: Final = """
     font_px: parseFloat(style.fontSize),
     size: style.getPropertyValue('--size').trim(),
     fit: value.style.getPropertyValue('--fit').trim(),
+    label: label.innerText.replace(/\\s+/g, ' ').trim(),
+    label_px: parseFloat(getComputedStyle(label).fontSize),
   };
 })
 """
 """Every ``.rank`` in document order, with the figure it prints.
 
 Walked off the rows rather than off ``.rank__value`` directly, so a row that has lost
-its value or its ordinal comes back as ``null`` instead of shortening the sequence:
+its value, its ordinal or its label comes back as ``null`` instead of shortening the
+sequence:
 a row the fence cannot see is a row that cannot break the ordering. ``position`` is
 the document index and ``ordinal`` is the number the reader sees, and the assertions
 below check they agree -- reading order *is* rank order here, and nothing else on the
@@ -4693,6 +4720,10 @@ class RankedFigure:
     non-increasing."""
     fit: str
     """The inline ``--fit`` cap, verbatim."""
+    label: str
+    """The row's own label -- the name of the thing this figure ranks."""
+    label_px: float
+    """And the size it is set at, which is the other half of the row's hierarchy."""
 
 
 def read_ranked_figures(rows: Sequence[object]) -> tuple[RankedFigure, ...]:
@@ -4700,9 +4731,9 @@ def read_ranked_figures(rows: Sequence[object]) -> tuple[RankedFigure, ...]:
     figures: list[RankedFigure] = []
     for index, row in enumerate(rows, start=1):
         assert row is not None, (
-            f".rank #{index} of {len(rows)} has no .rank__value or no .rank__ordinal, "
-            "so it drops out of the ordering entirely -- and a row this fence cannot "
-            "see is a row that cannot break it"
+            f".rank #{index} of {len(rows)} is missing its value, its ordinal or its "
+            "label, so it drops out of the ordering entirely -- and a row this fence "
+            "cannot see is a row that cannot break it"
         )
         fields = _fields(row)
         figures.append(
@@ -4713,6 +4744,8 @@ def read_ranked_figures(rows: Sequence[object]) -> tuple[RankedFigure, ...]:
                 font_px=_number(fields["font_px"]),
                 size=_text(fields["size"]),
                 fit=_text(fields["fit"]),
+                label=_text(fields["label"]),
+                label_px=_number(fields["label_px"]),
             )
         )
     return tuple(figures)
@@ -4795,6 +4828,14 @@ async def test_a_ranked_figure_never_grows_as_the_rank_falls(
     non-increasing. So a red cell here means one of those two stopped descending,
     which is why the failure prints both halves next to the rendered size.
 
+    The second claim is that each figure outranks its own label, and it is here rather
+    than in a cell of its own because monotonicity alone cannot see the way it was once
+    satisfied: shrinking every figure until the column was flat is non-increasing, and
+    so is a column whose tail has sunk under the prose beside it. Both assertions walk
+    the same rows, so the pair costs one measurement. This one is also structural --
+    ``.rank__label`` is a flat 11px and ``.rank__value``'s floor is 19px, so no content
+    and no width can invert it -- which is exactly why it is cheap to hold.
+
     Three widths and both themes, and neither axis is decoration. No theme changes
     any font size on this page, so the two theme cells are expected to agree
     exactly -- and that agreement is worth having, because it is the assumption every
@@ -4857,6 +4898,25 @@ async def test_a_ranked_figure_never_grows_as_the_rank_falls(
         + "\nDisplay size is how this body expresses rank, so either --size stopped "
         "descending with the ordinal (layout._RANK_LADDER) or --fit stopped being a "
         "running minimum (layout._descending_caps)"
+    )
+
+    outranked = [
+        figure for figure in figures if figure.font_px <= figure.label_px
+    ]
+    assert not outranked, (
+        f"{where}: a row's figure is set no larger than its own label:\n"
+        + "\n".join(
+            f"  #{figure.ordinal} figure {figure.text!r} at {figure.font_px}px "
+            f"against label {figure.label!r} at {figure.label_px}px "
+            f"({figure.font_px / figure.label_px:.2f}x)"
+            for figure in outranked
+        )
+        + "\nThe ordering above can be perfectly monotone and still say the wrong "
+        "thing: what a reader sees first in a ranked row has to be the figure that "
+        "ranks it, not the name of the thing ranked. This is the assertion that "
+        "stops monotonicity being bought by shrinking the tail into the prose -- "
+        "measured at 640px before the row learned to stack, all ten figures came "
+        "out 21-29% smaller than the 27px display labels beside them"
     )
 
     lead, last = figures[0], figures[-1]

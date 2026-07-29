@@ -179,10 +179,19 @@
   line-height: 1.5;
   color: var(--accent-paper);
 }
+/* The same absolute floor `ranked_list.css` puts under `.rank__value`, and here it is
+   the *precondition* for the suffix floor below rather than a legibility fix of its
+   own: flooring a suffix at 10.5px while the number it annotates is free to reach
+   7.92px -- which `_MIN_FIT_CQW` allows in this 264px column at 640px -- makes the unit
+   larger than its own value and pushes the pair out of the chip. Measured: the overflow
+   walk in `test_template_bodies` goes red on exactly that. 19px is 1.15x the 16.5px
+   prose; it binds on nothing the real content produces, whose smallest chip figure is
+   20.96px at 640px. */
 .chip__value {
   margin-top: 8px;
   font-family: var(--display);
   font-weight: 700;
+  font-size: max(19px, min(var(--size), var(--fit)));
   line-height: 0.98;
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
@@ -192,9 +201,13 @@
 .chip--l  { --size: var(--s2); }
 .chip--m  { --size: var(--s1); }
 .chip--s  { --size: var(--s0); }
+/* Floored at the page's own smallest size, the 10.5px of `.tick`, `figcaption` and
+   `.credit__url`: `0.3em` of a chip value that has shrunk to 21px is 6.3px, which is
+   smaller than any glyph a reader is asked to transcribe out of the PNG. It binds
+   below a 35px value. */
 .chip__unit {
   font-family: var(--data);
-  font-size: 0.3em;
+  font-size: max(10.5px, 0.3em);
   font-weight: 400;
   letter-spacing: 0.04em;
   margin-inline-start: 0.34em;

@@ -617,6 +617,26 @@ FIT_JS = """
   }))
 """
 
+UNIT_SIZE_JS = """
+(selector) => Array.from(document.querySelectorAll(selector))
+  .map(el => ({
+    text: el.textContent.trim(),
+    font_px: parseFloat(getComputedStyle(el).fontSize),
+  }))
+"""
+"""The rendered size of every unit suffix on the page.
+
+Only meaningful next to a value the floor has caught. Both bodies size the suffix as a
+fraction of the value it follows -- ``0.28em`` in ``ranked_list``, ``0.3em`` in
+``process_flow`` -- so a value that has shrunk takes the suffix down with it, and the
+one fixture that drives a value to its floor is the one that can see it."""
+
+SMALLEST_TYPE_PX: Final = 10.5
+"""The smallest size anything on this page is set at: ``.tick``, ``.plates
+figcaption`` and ``.credit__url`` are all 10.5px, and the last of those is a licence
+URI a reader has to transcribe out of a PNG by hand. Nothing may render smaller than
+the type the design already asks that much of."""
+
 
 @dataclass(frozen=True, slots=True)
 class Annotations:
@@ -1264,6 +1284,12 @@ async def test_a_value_below_the_fit_floor_wraps_without_leaving_its_box(
             _fields(row)
             for row in _rows(await page.evaluate(FIT_JS, selectors.value))
         ]
+        units = [
+            _fields(row)
+            for row in _rows(
+                await page.evaluate(UNIT_SIZE_JS, annotations_of(template_id).unit)
+            )
+        ]
 
     examined = int(_number(spill["examined"]))
     offenders = [_fields(row) for row in _rows(spill["offenders"])]
@@ -1288,4 +1314,23 @@ async def test_a_value_below_the_fit_floor_wraps_without_leaving_its_box(
         f"in {template_id} at {width_px}px, a value pinned to the {AT_FIT_FLOOR} fit "
         "floor pushed elements out of their parents:\n"
         + describe_offenders(offenders)
+    )
+
+    assert len(units) == len(FLOOR_CONTENT.facts), (
+        f"{template_id} at {width_px}px: {annotations_of(template_id).unit!r} matched "
+        f"{len(units)} elements, expected one per fact ({len(FLOOR_CONTENT.facts)}) -- "
+        "this fixture is the only one whose value reaches the floor, so at zero the "
+        "suffix size below is asserted nowhere in the suite"
+    )
+    illegible = [
+        (_text(row["text"]), _number(row["font_px"]))
+        for row in units
+        if _number(row["font_px"]) < SMALLEST_TYPE_PX
+    ]
+    assert not illegible, (
+        f"{template_id} at {width_px}px: {illegible} -- a unit suffix is sized as a "
+        f"fraction of the value it follows, so a value the floor has caught drags its "
+        f"suffix under {SMALLEST_TYPE_PX}px, which is smaller than any type this design "
+        "sets. Without an absolute floor of its own the suffix reads as 5-6px in the "
+        "PNG: the number keeps its unit and the unit stops being readable"
     )

@@ -32,7 +32,9 @@
 {% if page.body.ranks %}
 <ol class="ranks">
   {% for rank in page.body.ranks %}
-  <li class="rank gutter{{ ' rank--lead' if loop.first }}">
+  {#- `on-ink` travels with `rank--lead`: it is what gives `.rank__src`'s tick the
+      patch accent instead of leaving a 1.48:1 rule on the ink panel. -#}
+  <li class="rank gutter{{ ' rank--lead on-ink' if loop.first }}">
     <p class="rank__ordinal">{{ rank.ordinal }}</p>
     <div class="rank__text">
       <p class="rank__label">{{ rank.label }}</p>
