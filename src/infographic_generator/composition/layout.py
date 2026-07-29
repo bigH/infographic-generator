@@ -6,27 +6,31 @@ escaping. The template owns markup; escaping is Jinja2's job. Keeping the
 decisions here means they are typed and testable, and the template stays a
 layout description rather than a program.
 
-The layout is a specimen sheet: an ink masthead with the hero punched into it, a
-ledger of statistics set two to a line, and inverted "patch" rows that break the
-ledger's rhythm the way the animal's markings break its coat.
+The house layout is a specimen sheet: an ink masthead with the hero punched into
+it, a ledger of statistics set two to a line, and inverted "patch" rows that
+break the ledger's rhythm the way the animal's markings break its coat. The other
+bodies borrow that vocabulary -- same tokens, same ticks, same rules -- so they
+read as siblings.
 
-The view model comes in two halves. :class:`PageChrome` is the furniture every
-layout shares -- shell, fonts, masthead, bibliography, colophon -- and a body
-class is one layout's own information architecture. Splitting them is what keeps
-the colophon honest: credits are derived from the figures the *chosen* body
+One chrome, three bodies. :func:`build_chrome` computes the furniture once and
+each body builder decides only its own information architecture, which is what
+keeps the colophon honest: credits are derived from the figures the *chosen* body
 actually places, never from the assets it was handed.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import logging
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Final, TypeAlias
+from types import MappingProxyType
+from typing import Final, TypeAlias, assert_never
 from urllib.parse import urlsplit
 
+from infographic_generator.composition.registry import TEMPLATE_REGISTRY
 from infographic_generator.core.encoding import data_uri, to_data_uri
 from infographic_generator.core.models import (
     Brief,
@@ -38,6 +42,8 @@ from infographic_generator.core.models import (
     Source,
     Theme,
 )
+
+_LOG: Final = logging.getLogger(__name__)
 
 FONT_DIR: Final = Path(__file__).resolve().parent / "fonts"
 
@@ -189,8 +195,54 @@ class StatGridBody:
     sections: Sequence[Section]
 
 
-PageBody: TypeAlias = StatGridBody
-"""Today there is one body shape; a later phase widens this to a union."""
+@dataclass(frozen=True, slots=True)
+class Step:
+    """One rung of a process flow."""
+
+    ordinal: int
+    """1-based; the number actually printed in the badge. Numbering lives here
+    rather than in a CSS counter so the view model is what the reader sees."""
+    heading: str
+    body: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessFlowBody:
+    """The process-flow layout: a numbered rail of steps over a fact strip."""
+
+    hero: Figure | None
+    steps: Sequence[Step]
+    facts: Sequence[Stat]
+    """Surviving facts, rendered as a supporting strip -- the sequence carries
+    the story but a fact handed to us is still a fact we owe the reader."""
+    figures: Sequence[Figure]
+    """Non-hero images this body places, and therefore credits."""
+
+
+@dataclass(frozen=True, slots=True)
+class Rank:
+    """One row of a ranked list. Position is the rank; nothing else encodes it."""
+
+    ordinal: int
+    label: str
+    value: str
+    unit: str | None
+    detail: str | None
+    attribution: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RankedListBody:
+    """The ranked-list layout: an ordered ledger of items, prose beneath."""
+
+    hero: Figure | None
+    ranks: Sequence[Rank]
+    sections: Sequence[Section]
+    figures: Sequence[Figure]
+
+
+PageBody: TypeAlias = StatGridBody | ProcessFlowBody | RankedListBody
+"""One per renderable template. A template reads exactly one of these shapes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,19 +253,104 @@ class Page:
     body: PageBody
 
 
+_PageBuilder: TypeAlias = Callable[
+    [Brief, ResearchContent, Sequence[ImageAsset]], "Page"
+]
+
+
 def build_page(
     brief: Brief, content: ResearchContent, images: Sequence[ImageAsset]
 ) -> Page:
-    """Assemble the view model. Raises ``OSError`` for an unreadable asset."""
+    """Assemble the stat-grid view model. Raises ``OSError`` for an unreadable asset.
+
+    Deliberately *not* degrading, unlike the two builders below: this is the
+    default composer's path and ``core.ports.Composer`` documents ``OSError`` for
+    an unreadable ``Path`` asset, which ``test_missing_path_backed_asset_raises_
+    oserror`` pins. The newer bodies skip what they cannot read because a layout
+    chosen for a *shape* should not lose the whole page to one bad file. If you
+    are here to make the two consistent: that is a contract change, not a
+    cleanup, and it belongs in a conversation about ``ports.py``.
+
+    Only the assets this body places are encoded, so an unreadable asset past the
+    band's capacity costs nothing and raises nothing -- the page never shows it.
+    """
     hero, band = _imagery(images)
-    title = _page_title(brief, content)
     body = StatGridBody(
         hero=hero,
         ledger=_ledger(content.facts),
         band=band,
         sections=tuple(_section(section) for section in content.sections),
     )
-    chrome = PageChrome(
+    return Page(chrome=build_chrome(brief, content, body), body=body)
+
+
+def build_process_flow_page(
+    brief: Brief, content: ResearchContent, images: Sequence[ImageAsset]
+) -> Page:
+    """Sections become numbered steps, in the order the researcher gave them."""
+    hero, rest = _readable_figures(images)
+    body = ProcessFlowBody(
+        hero=hero,
+        steps=tuple(
+            Step(ordinal=index, heading=section.heading, body=section.body)
+            for index, section in enumerate(content.sections, start=1)
+        ),
+        facts=tuple(
+            _stat(fact, feature=False, full_width=False) for fact in content.facts
+        ),
+        figures=rest,
+    )
+    return Page(chrome=build_chrome(brief, content, body), body=body)
+
+
+def build_ranked_list_page(
+    brief: Brief, content: ResearchContent, images: Sequence[ImageAsset]
+) -> Page:
+    """List order *is* the ranking -- ``ports.py`` already guarantees fact order."""
+    hero, rest = _readable_figures(images)
+    body = RankedListBody(
+        hero=hero,
+        ranks=tuple(
+            _rank(fact, ordinal=index)
+            for index, fact in enumerate(content.facts, start=1)
+        ),
+        sections=tuple(_section(section) for section in content.sections),
+        figures=rest,
+    )
+    return Page(chrome=build_chrome(brief, content, body), body=body)
+
+
+_BUILDERS: Final[Mapping[str, _PageBuilder]] = MappingProxyType(
+    {
+        "stat_grid": build_page,
+        "process_flow": build_process_flow_page,
+        "ranked_list": build_ranked_list_page,
+    }
+)
+
+
+def build_page_for(
+    template_id: str,
+    brief: Brief,
+    content: ResearchContent,
+    images: Sequence[ImageAsset],
+) -> Page:
+    """Build the body the named template reads, falling back to ``stat_grid``.
+
+    Never raises on an unrecognised or blocked id: the selection chain is allowed
+    to hand us a garbled extras value or a template registered but not yet
+    buildable, and neither may cost a render.
+    """
+    spec = TEMPLATE_REGISTRY.get(template_id)
+    if spec is None or spec.blocked_on is not None:
+        return build_page(brief, content, images)
+    return _BUILDERS.get(spec.id, build_page)(brief, content, images)
+
+
+def build_chrome(brief: Brief, content: ResearchContent, body: PageBody) -> PageChrome:
+    """The furniture every layout shares, plus credits for what ``body`` displays."""
+    title = _page_title(brief, content)
+    return PageChrome(
         lang=_bcp47(brief.locale),
         direction=_direction(brief.locale),
         theme=brief.options.theme,
@@ -229,23 +366,71 @@ def build_page(
         gutter_px=_gutter(brief.options.width_px),
         min_height_px=brief.options.height_px,
     )
-    return Page(chrome=chrome, body=body)
 
 
-def _credits_of(body: StatGridBody) -> tuple[Credit, ...]:
+def _credits_of(body: PageBody) -> tuple[Credit, ...]:
     """Credit exactly the figures the body places, in the order it places them.
 
     Attribution has to track what is *displayed*: crediting an image nobody can
     see is noise, and the same derivation is what guarantees a displayed one is
-    never missed. An asset the body never placed was never encoded either, so it
-    is neither shown nor credited.
+    never missed. An asset the body did not place was never encoded either -- a
+    figure the builder dropped as unreadable, or one past the band's capacity --
+    so it is neither shown nor credited. A credit with nothing in it is dropped
+    too, rather than drawing a ruled row that says nothing.
     """
-    lead: tuple[Figure, ...] = () if body.hero is None else (body.hero,)
     return tuple(
         figure.credit
-        for figure in (*lead, *body.band)
+        for figure in _figures_of(body)
         if _has_attribution(figure.credit)
     )
+
+
+def _figures_of(body: PageBody) -> tuple[Figure, ...]:
+    """Every figure the body places, hero first."""
+    lead: tuple[Figure, ...] = () if body.hero is None else (body.hero,)
+    match body:
+        case StatGridBody():
+            return (*lead, *body.band)
+        case ProcessFlowBody() | RankedListBody():
+            return (*lead, *body.figures)
+        case unreachable:
+            assert_never(unreachable)
+
+
+def _readable_figures(
+    images: Sequence[ImageAsset],
+) -> tuple[Figure | None, tuple[Figure, ...]]:
+    """Encode what we can and drop what we cannot, then split off the hero.
+
+    An asset whose bytes will not come back is *skipped*, never substituted: a
+    placeholder would be a claim about content we do not have, and an image the
+    page never shows must not appear in the colophon either. Both "no images at
+    all" and "no hero among them" come back as ``None`` for the hero slot, which
+    is the template's cue to lay out text only.
+
+    Unlike :func:`_imagery` these bodies place every readable asset, so there is
+    nothing to be gained by deferring the encode: it is the encode itself that
+    tells us whether the asset is readable.
+    """
+    figures: list[Figure] = []
+    readable: list[ImageAsset] = []
+    for asset in images:
+        try:
+            figure = _figure(asset)
+        except OSError as error:
+            _LOG.warning(
+                "skipping unreadable %s asset in role %s: %s",
+                asset.mime_type,
+                asset.role,
+                error,
+            )
+            continue
+        figures.append(figure)
+        readable.append(asset)
+    lead = _hero_index(readable)
+    if lead is None:
+        return None, ()
+    return figures[lead], tuple(f for i, f in enumerate(figures) if i != lead)
 
 
 # --------------------------------------------------------------------------- #
@@ -377,6 +562,17 @@ def _unit_width(unit: str | None) -> float:
     return 0.0 if unit is None else len(unit.strip()) * _UNIT_ADVANCE + 0.5
 
 
+def _rank(fact: Fact, *, ordinal: int) -> Rank:
+    return Rank(
+        ordinal=ordinal,
+        label=fact.label,
+        value=fact.value,
+        unit=fact.unit,
+        detail=fact.detail,
+        attribution=_attribution(fact.source),
+    )
+
+
 def _attribution(source: Source | None) -> str | None:
     if source is None:
         return None
@@ -459,15 +655,25 @@ def _imagery(
     return _figure(lead), tuple(map(_figure, rest[:_BAND_CAPACITY]))
 
 
+def _hero_index(images: Sequence[ImageAsset]) -> int | None:
+    """Lead with the first ``HERO`` asset, else the first asset given.
+
+    The rule lives here rather than in either caller because ``_imagery`` splits
+    assets and ``_readable_figures`` splits the figures encoded from them, and the
+    two must agree on which one leads.
+    """
+    if not images:
+        return None
+    return next((i for i, asset in enumerate(images) if asset.role is ImageRole.HERO), 0)
+
+
 def _split_hero(
     images: Sequence[ImageAsset],
 ) -> tuple[ImageAsset | None, tuple[ImageAsset, ...]]:
-    """Lead with the first ``HERO`` asset, else the first asset given."""
-    if not images:
+    """The lead asset and the rest, in order."""
+    lead = _hero_index(images)
+    if lead is None:
         return None, ()
-    lead = next(
-        (i for i, asset in enumerate(images) if asset.role is ImageRole.HERO), 0
-    )
     return images[lead], tuple(a for i, a in enumerate(images) if i != lead)
 
 

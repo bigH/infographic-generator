@@ -1,0 +1,73 @@
+{#-
+  Process-flow layout. A numbered rail of steps -- badge, heading, explanation --
+  followed by a strip carrying every fact we were handed, then any remaining
+  imagery. Chrome comes from ``_base.html.j2``. Every image slot is guarded: no
+  hero means a text-only masthead, not a placeholder.
+-#}
+{% extends "_base.html.j2" %}
+{% block body_css %}
+{% include "css/process_flow.css" %}
+{% endblock %}
+{#- The hero fills the masthead's second column, so the flat variant is for a
+    page that has no hero at all. `masthead--split` was never styled. -#}
+{% block masthead_variant %}{{ '' if page.body.hero else ' masthead--flat' }}{% endblock %}
+{% block masthead_aside %}
+  {% if page.body.hero %}
+  <figure class="hero">
+    <img src="{{ page.body.hero.data_uri }}" alt="{{ page.body.hero.alt }}">
+    {# No caption means nothing to darken the image for. #}
+    {% if page.body.hero.caption %}
+    <figcaption class="hero__credit">{{ page.body.hero.caption }}</figcaption>
+    {% endif %}
+  </figure>
+  {% endif %}
+{% endblock %}
+{% block body %}
+{% if page.chrome.summary %}
+<section class="lede on-ink gutter">
+  <p>{{ page.chrome.summary }}</p>
+</section>
+{% endif %}
+
+{% if page.body.steps %}
+<ol class="flow gutter">
+  {% for step in page.body.steps %}
+  <li class="step{{ ' step--last' if loop.last }}">
+    <p class="step__badge">{{ step.ordinal }}</p>
+    <div class="step__text">
+      <h2 class="step__heading">{{ step.heading }}</h2>
+      <p class="step__body">{{ step.body }}</p>
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% endif %}
+
+{% if page.body.facts %}
+<section class="strip on-ink gutter">
+  <p class="strip__label tick">By the numbers</p>
+  <div class="chips">
+    {% for stat in page.body.facts %}
+    <div class="chip">
+      <p class="chip__label">{{ stat.label }}</p>
+      <p class="chip__value chip--{{ stat.scale }}">{{ stat.value }}
+        {%- if stat.unit %}<span class="chip__unit">{{ stat.unit }}</span>{% endif %}</p>
+      {% if stat.detail %}<p class="chip__detail">{{ stat.detail }}</p>{% endif %}
+      {% if stat.attribution %}<p class="chip__src tick">{{ stat.attribution }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if page.body.figures %}
+<section class="plates gutter">
+  {% for figure in page.body.figures %}
+  <figure>
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,154 @@
+
+/* --- hero (punched into the masthead) -------------------------------- */
+.hero { position: relative; overflow: hidden; }
+/* The one deliberate crop on the page: the hero fills the masthead's height. */
+.hero img { height: 100%; object-fit: cover; }
+.hero__credit {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  padding: 26px 18px 10px;
+  background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
+  color: #eeeade;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-align: end;
+}
+
+/* --- lede ----------------------------------------------------------- */
+.lede {
+  background: var(--patch);
+  color: var(--on-patch);
+  padding-block: 40px 68px;
+}
+.lede p {
+  max-width: 62ch;
+  border-top: 1px solid var(--rule-patch);
+  padding-top: 34px;
+  font-size: 24px;
+  line-height: 1.5;
+}
+
+/* --- the rail ------------------------------------------------------- */
+.flow { padding-block: 62px 26px; }
+.step {
+  position: relative;
+  display: flex;
+  gap: 32px;
+  padding-block-end: 40px;
+}
+.step--last { padding-block-end: 6px; }
+
+.step__badge {
+  flex-shrink: 0;
+  width: 68px;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--patch);
+  color: var(--on-patch);
+  box-shadow: 0 0 0 2px var(--accent-paper);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+/* The connector the layout's name promises: a rail from one badge to the next,
+   started at the badge's inline centre so it reads the same in RTL. */
+.step:not(.step--last)::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 33px;
+  top: 68px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--rule-paper);
+}
+
+.step__text { padding-top: 9px; }
+.step__heading {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 31px;
+  line-height: 1.08;
+  letter-spacing: -0.012em;
+}
+.step__body {
+  margin-top: 12px;
+  max-width: 64ch;
+  font-size: 18px;
+  line-height: 1.64;
+}
+
+/* --- fact strip ----------------------------------------------------- */
+.strip {
+  background: var(--patch);
+  color: var(--on-patch);
+  padding-block: 46px 56px;
+}
+.strip__label { margin-bottom: 30px; }
+/* Columns rather than a grid, so a short chip does not leave a tall hole beside
+   a long one -- the same device the references apparatus uses. Three columns is
+   the widest count a headline value fits in without breaking mid-word. */
+.chips { columns: 3; column-gap: 36px; }
+.chip {
+  break-inside: avoid;
+  margin-bottom: 30px;
+  border-top: 1px solid var(--rule-patch);
+  padding-top: 16px;
+}
+.chip__label {
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  color: var(--accent-patch);
+}
+.chip__value {
+  margin-top: 10px;
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.02em;
+  overflow-wrap: break-word;
+}
+.chip--xl { font-size: 48px; }
+.chip--l  { font-size: 38px; }
+.chip--m  { font-size: 31px; }
+.chip--s  { font-size: 26px; }
+.chip__unit {
+  font-family: var(--data);
+  font-size: 0.3em;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  margin-inline-start: 0.34em;
+  color: var(--dim-patch);
+}
+.chip__detail {
+  margin-top: 11px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--dim-patch);
+}
+.chip__src { margin-top: 11px; }
+
+/* --- plates --------------------------------------------------------- */
+.plates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+  padding-block: 52px;
+}
+.plates figcaption {
+  margin-top: 11px;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+  color: var(--dim-paper);
+}

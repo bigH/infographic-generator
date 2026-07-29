@@ -1,0 +1,70 @@
+{#-
+  Ranked-list layout. One row per fact in the order given -- rank gutter, label
+  and detail, value on the trailing edge -- with the leader enlarged, then prose
+  and any remaining imagery. Chrome comes from ``_base.html.j2``. Every image slot
+  is guarded: no hero means a text-only masthead, not a placeholder.
+-#}
+{% extends "_base.html.j2" %}
+{% block body_css %}
+{% include "css/ranked_list.css" %}
+{% endblock %}
+{#- The hero fills the masthead's second column, so the flat variant is for a
+    page that has no hero at all. `masthead--split` was never styled. -#}
+{% block masthead_variant %}{{ '' if page.body.hero else ' masthead--flat' }}{% endblock %}
+{% block masthead_aside %}
+  {% if page.body.hero %}
+  <figure class="hero">
+    <img src="{{ page.body.hero.data_uri }}" alt="{{ page.body.hero.alt }}">
+    {# No caption means nothing to darken the image for. #}
+    {% if page.body.hero.caption %}
+    <figcaption class="hero__credit">{{ page.body.hero.caption }}</figcaption>
+    {% endif %}
+  </figure>
+  {% endif %}
+{% endblock %}
+{% block body %}
+{% if page.chrome.summary %}
+<section class="lede on-ink gutter">
+  <p>{{ page.chrome.summary }}</p>
+</section>
+{% endif %}
+
+{% if page.body.ranks %}
+<ol class="ranks">
+  {% for rank in page.body.ranks %}
+  <li class="rank gutter{{ ' rank--lead' if loop.first }}">
+    <p class="rank__ordinal">{{ rank.ordinal }}</p>
+    <div class="rank__text">
+      <p class="rank__label">{{ rank.label }}</p>
+      {% if rank.detail %}<p class="rank__detail">{{ rank.detail }}</p>{% endif %}
+      {% if rank.attribution %}<p class="rank__src tick">{{ rank.attribution }}</p>{% endif %}
+    </div>
+    <p class="rank__value">{{ rank.value }}
+      {%- if rank.unit %}<span class="rank__unit">{{ rank.unit }}</span>{% endif %}</p>
+  </li>
+  {% endfor %}
+</ol>
+{% endif %}
+
+{% if page.body.sections %}
+<div class="essay">
+  {% for section in page.body.sections %}
+  <section class="section gutter">
+    <h2 class="section__heading">{{ section.heading }}</h2>
+    <div class="section__body"><p>{{ section.body }}</p></div>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if page.body.figures %}
+<section class="plates gutter">
+  {% for figure in page.body.figures %}
+  <figure>
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}
