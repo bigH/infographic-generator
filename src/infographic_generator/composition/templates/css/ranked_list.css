@@ -1,4 +1,9 @@
-
+{#-
+  The ranked-list body's own stylesheet. Display type picks a rung off the shared
+  --s0..--s7 ramp rather than inventing a px value, and the value on the trailing
+  edge is `.fitted`: capped both by the rung its length earns and by what its own
+  column can hold, so a long value shrinks instead of wrapping or overflowing.
+-#}
 /* --- hero (punched into the masthead) -------------------------------- */
 .hero { position: relative; overflow: hidden; }
 /* The one deliberate crop on the page: the hero fills the masthead's height. */
@@ -7,7 +12,7 @@
   position: absolute;
   inset-inline: 0;
   bottom: 0;
-  padding: 26px 18px 10px;
+  padding: 24px 16px 9px;
   background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
   color: #eeeade;
   font-family: var(--data);
@@ -20,68 +25,79 @@
 .lede {
   background: var(--patch);
   color: var(--on-patch);
-  padding-block: 40px 68px;
+  padding-block: 30px 40px;
 }
 .lede p {
-  max-width: 62ch;
+  max-width: 76ch;
   border-top: 1px solid var(--rule-patch);
-  padding-top: 34px;
+  padding-top: 24px;
   font-size: 24px;
-  line-height: 1.5;
+  line-height: 1.44;
 }
 
 /* --- the ranking ---------------------------------------------------- */
 .ranks {
-  --rank-gutter: 78px;
+  --rank-gutter: 64px;
   padding-block: 6px 0;
 }
 .rank {
   display: flex;
   align-items: baseline;
-  gap: 26px;
+  gap: 24px;
   border-top: 1px solid var(--rule-paper);
-  padding-block: 28px 32px;
+  padding-block: 15px 20px;
 }
 /* Fixed inline size, so every label starts on the same line whichever
    direction the text runs. */
 .rank__ordinal {
   flex: 0 0 var(--rank-gutter);
   font-family: var(--data);
-  font-size: 30px;
+  font-size: var(--s0);
   line-height: 1;
   letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: lining-nums tabular-nums;
   color: var(--accent-paper);
 }
 .rank__text { flex: 1 1 auto; min-width: 0; }
 .rank__label {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 28px;
+  font-size: var(--s0);
   line-height: 1.12;
   letter-spacing: -0.012em;
   overflow-wrap: break-word;
+  font-variant-numeric: lining-nums tabular-nums;
 }
 .rank__detail {
-  margin-top: 9px;
-  max-width: 58ch;
-  font-size: 15.5px;
-  line-height: 1.55;
+  margin-top: 8px;
+  max-width: 72ch;
+  font-size: 14.5px;
+  line-height: 1.45;
   color: var(--dim-paper);
 }
-.rank__src { margin-top: 11px; }
-.rank__value {
-  flex: 0 1 auto;
-  max-width: 46%;
+.rank__src { margin-top: 9px; }
+
+/* The value's own column, and the query container the width-derived cap is
+   measured against -- the whole row would be the wrong answer, because the value
+   never gets the whole row. */
+.rank__figure {
+  container-type: inline-size;
+  flex: 0 1 34%;
   margin-inline-start: auto;
   text-align: end;
+}
+.rank__value {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 40px;
   line-height: 0.96;
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
+  font-variant-numeric: lining-nums tabular-nums;
 }
+.value--xl { --size: var(--s3); }
+.value--l  { --size: var(--s2); }
+.value--m  { --size: var(--s1); }
+.value--s  { --size: var(--s0); }
 .rank__unit {
   font-family: var(--data);
   font-size: 0.28em;
@@ -96,46 +112,59 @@
   background: var(--patch);
   color: var(--on-patch);
   border-top: 0;
-  padding-block: 42px 46px;
+  padding-block: 30px 32px;
 }
-.rank--lead .rank__ordinal { font-size: 38px; color: var(--accent-patch); }
-.rank--lead .rank__label { font-size: 40px; }
+.rank--lead .rank__ordinal { font-size: var(--s1); color: var(--accent-patch); }
+.rank--lead .rank__label { font-size: var(--s2); }
 .rank--lead .rank__detail { color: var(--dim-patch); }
-.rank--lead .rank__value { font-size: 72px; }
+.rank--lead .rank__src { color: var(--dim-patch); }
+.rank--lead .value--xl { --size: var(--s5); }
+.rank--lead .value--l  { --size: var(--s4); }
+.rank--lead .value--m  { --size: var(--s3); }
+.rank--lead .value--s  { --size: var(--s2); }
 .rank--lead .rank__unit { color: var(--dim-patch); }
 
 /* --- narrative ------------------------------------------------------ */
-.essay { padding-block: 16px 8px; }
+.essay { padding-block: 10px 6px; }
 .section {
   display: grid;
-  grid-template-columns: minmax(180px, 300px) 1fr;
-  gap: 46px;
+  grid-template-columns: minmax(170px, 280px) 1fr;
+  gap: 40px;
   border-top: 1px solid var(--rule-paper);
-  padding-block: 42px 46px;
+  padding-block: 24px 28px;
 }
 .section__heading {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 29px;
+  font-size: var(--s0);
   line-height: 1.08;
   letter-spacing: -0.01em;
   border-inline-start: 2px solid var(--accent-paper);
   padding-inline-start: 14px;
+  font-variant-numeric: lining-nums tabular-nums;
 }
-.section__body { max-width: 66ch; font-size: 18px; line-height: 1.64; }
+/* No font-size of its own: the body sets the reading size once. A second, larger
+   one here is part of how this page got tall enough that nobody scrolled it. */
+.section__body { max-width: 78ch; }
+.section__src { margin-top: 12px; }
 
 /* --- plates --------------------------------------------------------- */
+/* Justified strip on the ledger band's device: each figure's flex-grow is its
+   aspect ratio, so widths come out proportional and every image lands on the same
+   height uncropped. The old auto-fit grid sized its tracks off the captions, and
+   a licence URL is one unbreakable token -- hence `overflow-wrap` below. */
 .plates {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 22px;
-  padding-block: 52px;
+  display: flex;
+  gap: 18px;
+  padding-block: 26px;
 }
+.plates figure { display: flex; flex-direction: column; align-self: start; min-width: 0; }
 .plates figcaption {
-  margin-top: 11px;
+  margin-top: 10px;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.05em;
   line-height: 1.5;
   color: var(--dim-paper);
+  overflow-wrap: anywhere;
 }

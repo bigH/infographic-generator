@@ -1,4 +1,9 @@
-
+{#-
+  The process-flow body's own stylesheet. Display type picks a rung off the shared
+  --s0..--s7 ramp rather than inventing a px value, and every headline figure is
+  `.fitted`: capped both by the rung its length earns and by what its column can
+  actually hold, so a long value shrinks instead of wrapping or overflowing.
+-#}
 /* --- hero (punched into the masthead) -------------------------------- */
 .hero { position: relative; overflow: hidden; }
 /* The one deliberate crop on the page: the hero fills the masthead's height. */
@@ -7,7 +12,7 @@
   position: absolute;
   inset-inline: 0;
   bottom: 0;
-  padding: 26px 18px 10px;
+  padding: 24px 16px 9px;
   background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
   color: #eeeade;
   font-family: var(--data);
@@ -20,30 +25,30 @@
 .lede {
   background: var(--patch);
   color: var(--on-patch);
-  padding-block: 40px 68px;
+  padding-block: 30px 40px;
 }
 .lede p {
-  max-width: 62ch;
+  max-width: 76ch;
   border-top: 1px solid var(--rule-patch);
-  padding-top: 34px;
+  padding-top: 24px;
   font-size: 24px;
-  line-height: 1.5;
+  line-height: 1.44;
 }
 
 /* --- the rail ------------------------------------------------------- */
-.flow { padding-block: 62px 26px; }
+.flow { padding-block: 34px 18px; }
 .step {
   position: relative;
   display: flex;
-  gap: 32px;
-  padding-block-end: 40px;
+  gap: 28px;
+  padding-block-end: 26px;
 }
 .step--last { padding-block-end: 6px; }
 
 .step__badge {
   flex-shrink: 0;
-  width: 68px;
-  height: 68px;
+  width: 56px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -53,53 +58,57 @@
   box-shadow: 0 0 0 2px var(--accent-paper);
   font-family: var(--display);
   font-weight: 700;
-  font-size: 28px;
+  font-size: var(--s0);
   line-height: 1;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: lining-nums tabular-nums;
 }
 /* The connector the layout's name promises: a rail from one badge to the next,
    started at the badge's inline centre so it reads the same in RTL. */
 .step:not(.step--last)::before {
   content: "";
   position: absolute;
-  inset-inline-start: 33px;
-  top: 68px;
+  inset-inline-start: 27px;
+  top: 56px;
   bottom: 8px;
   width: 2px;
   background: var(--rule-paper);
 }
 
-.step__text { padding-top: 9px; }
+.step__text { padding-top: 4px; }
 .step__heading {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 31px;
+  font-size: var(--s1);
   line-height: 1.08;
   letter-spacing: -0.012em;
+  font-variant-numeric: lining-nums tabular-nums;
 }
+/* No font-size of its own: the body sets the reading size once. A second, larger
+   one here is part of how this page got tall enough that nobody scrolled it. */
 .step__body {
-  margin-top: 12px;
-  max-width: 64ch;
-  font-size: 18px;
-  line-height: 1.64;
+  margin-top: 10px;
+  max-width: 78ch;
 }
 
 /* --- fact strip ----------------------------------------------------- */
 .strip {
   background: var(--patch);
   color: var(--on-patch);
-  padding-block: 46px 56px;
+  padding-block: 30px 36px;
 }
-.strip__label { margin-bottom: 30px; }
+.strip__label { margin-bottom: 20px; }
 /* Columns rather than a grid, so a short chip does not leave a tall hole beside
    a long one -- the same device the references apparatus uses. Three columns is
    the widest count a headline value fits in without breaking mid-word. */
 .chips { columns: 3; column-gap: 36px; }
+/* The query container is the chip, so a value sized against it stays inside its
+   own column however many columns the strip is set in. */
 .chip {
+  container-type: inline-size;
   break-inside: avoid;
-  margin-bottom: 30px;
+  margin-bottom: 22px;
   border-top: 1px solid var(--rule-patch);
-  padding-top: 16px;
+  padding-top: 14px;
 }
 .chip__label {
   font-family: var(--data);
@@ -110,17 +119,18 @@
   color: var(--accent-patch);
 }
 .chip__value {
-  margin-top: 10px;
+  margin-top: 8px;
   font-family: var(--display);
   font-weight: 700;
   line-height: 0.98;
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
+  font-variant-numeric: lining-nums tabular-nums;
 }
-.chip--xl { font-size: 48px; }
-.chip--l  { font-size: 38px; }
-.chip--m  { font-size: 31px; }
-.chip--s  { font-size: 26px; }
+.chip--xl { --size: var(--s3); }
+.chip--l  { --size: var(--s2); }
+.chip--m  { --size: var(--s1); }
+.chip--s  { --size: var(--s0); }
 .chip__unit {
   font-family: var(--data);
   font-size: 0.3em;
@@ -130,25 +140,30 @@
   color: var(--dim-patch);
 }
 .chip__detail {
-  margin-top: 11px;
+  margin-top: 10px;
   font-size: 14.5px;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--dim-patch);
 }
-.chip__src { margin-top: 11px; }
+.chip__src { margin-top: 9px; }
 
 /* --- plates --------------------------------------------------------- */
+/* Justified strip on the ledger band's device: each figure's flex-grow is its
+   aspect ratio, so widths come out proportional and every image lands on the same
+   height uncropped. The old auto-fit grid sized its tracks off the captions, and
+   a licence URL is one unbreakable token -- hence `overflow-wrap` below. */
 .plates {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 22px;
-  padding-block: 52px;
+  display: flex;
+  gap: 18px;
+  padding-block: 26px;
 }
+.plates figure { display: flex; flex-direction: column; align-self: start; min-width: 0; }
 .plates figcaption {
-  margin-top: 11px;
+  margin-top: 10px;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.05em;
   line-height: 1.5;
   color: var(--dim-paper);
+  overflow-wrap: anywhere;
 }

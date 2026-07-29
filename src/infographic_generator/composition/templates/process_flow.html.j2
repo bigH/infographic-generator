@@ -50,7 +50,7 @@
     {% for stat in page.body.facts %}
     <div class="chip">
       <p class="chip__label">{{ stat.label }}</p>
-      <p class="chip__value chip--{{ stat.scale }}">{{ stat.value }}
+      <p class="chip__value fitted chip--{{ stat.scale }}" style="--fit: {{ stat.fit }}">{{ stat.value }}
         {%- if stat.unit %}<span class="chip__unit">{{ stat.unit }}</span>{% endif %}</p>
       {% if stat.detail %}<p class="chip__detail">{{ stat.detail }}</p>{% endif %}
       {% if stat.attribution %}<p class="chip__src tick">{{ stat.attribution }}</p>{% endif %}
@@ -63,7 +63,7 @@
 {% if page.body.figures %}
 <section class="plates gutter">
   {% for figure in page.body.figures %}
-  <figure>
+  <figure style="flex: {{ figure.aspect }} 1 0">
     <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
     <figcaption>{{ figure.caption }}</figcaption>
   </figure>

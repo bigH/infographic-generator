@@ -229,6 +229,10 @@ class Rank:
     unit: str | None
     detail: str | None
     attribution: str | None
+    scale: Scale
+    """The editorial ceiling on the value's size, as in the ledger."""
+    fit: str
+    """Width-derived cap on the value's font size, in container units."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -570,6 +574,8 @@ def _rank(fact: Fact, *, ordinal: int) -> Rank:
         unit=fact.unit,
         detail=fact.detail,
         attribution=_attribution(fact.source),
+        scale=_scale_for(fact.value, (7, 13, 20)),
+        fit=_fit(fact.value, _VALUE_ADVANCE, _unit_width(fact.unit)),
     )
 
 

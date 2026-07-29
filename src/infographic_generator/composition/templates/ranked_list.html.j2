@@ -39,8 +39,12 @@
       {% if rank.detail %}<p class="rank__detail">{{ rank.detail }}</p>{% endif %}
       {% if rank.attribution %}<p class="rank__src tick">{{ rank.attribution }}</p>{% endif %}
     </div>
-    <p class="rank__value">{{ rank.value }}
-      {%- if rank.unit %}<span class="rank__unit">{{ rank.unit }}</span>{% endif %}</p>
+    {#- The query container is the value's own column, not the row, so the
+        width-derived cap is measured against the space the value actually has. -#}
+    <div class="rank__figure">
+      <p class="rank__value fitted value--{{ rank.scale }}" style="--fit: {{ rank.fit }}">{{ rank.value }}
+        {%- if rank.unit %}<span class="rank__unit">{{ rank.unit }}</span>{% endif %}</p>
+    </div>
   </li>
   {% endfor %}
 </ol>
@@ -51,7 +55,12 @@
   {% for section in page.body.sections %}
   <section class="section gutter">
     <h2 class="section__heading">{{ section.heading }}</h2>
-    <div class="section__body"><p>{{ section.body }}</p></div>
+    <div class="section__body">
+      <p>{{ section.body }}</p>
+      {% if section.attributions %}
+      <p class="section__src tick">{{ section.attributions | join(' · ') }}</p>
+      {% endif %}
+    </div>
   </section>
   {% endfor %}
 </div>
@@ -60,7 +69,7 @@
 {% if page.body.figures %}
 <section class="plates gutter">
   {% for figure in page.body.figures %}
-  <figure>
+  <figure style="flex: {{ figure.aspect }} 1 0">
     <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
     <figcaption>{{ figure.caption }}</figcaption>
   </figure>
