@@ -365,9 +365,10 @@ def build_page_for(
 def build_chrome(brief: Brief, content: ResearchContent, body: PageBody) -> PageChrome:
     """The furniture every layout shares, plus credits for what ``body`` displays.
 
-    Raises ``TypeError`` if the brief's page geometry is not made of integers --
+    Raises ``ValueError`` if the brief's page geometry is not made of integers --
     see :func:`_css_px`, which is where the render options stop being caller data
-    and become CSS lengths.
+    and become CSS lengths. ``ValueError`` because that is what ``Composer`` in
+    ``core/ports.py`` permits this stage to raise.
     """
     title = _page_title(brief, content)
     width_px = _css_px(brief.options.width_px, "width_px")
@@ -403,28 +404,46 @@ def _css_px(value: object, field: str) -> int:
     reach CSS straight from a caller; every other length in the sheets and in the
     ``style=""`` attributes is a number computed here.
 
-    ``TypeError`` rather than the ``ValueError`` ``int(value)`` would raise, because
-    the fault is a type and not a value: the annotation says ``int`` and the caller
-    passed something that is not one. It also names the field, which the
-    interpreter's own message does not -- a hostile ``width_px`` used to die one
-    frame down in :func:`_gutter` as "can't multiply sequence by non-int of type
-    'float'", which mentions neither ``RenderOptions`` nor the page width.
-    ``int(value)`` would additionally accept ``"1200"`` and truncate ``1200.9``,
-    normalising one programming error while exploding on another; the contract is
-    ``int``, so the check is "is an int". No fallback and no clamp: a caller asking
-    for a nonsense page size hears about it rather than receiving a plausible PNG
-    that is not the one they asked for.
+    Two steps, doing two different jobs. The ``isinstance`` check is the *contract*
+    check: the annotation says ``int``, so the question asked is "is this an int",
+    which is why ``"1200"`` and ``1200.9`` are refused rather than converted --
+    accepting them would normalise one programming error while exploding on another.
+    No fallback and no clamp either: a caller asking for a nonsense page size hears
+    about it rather than receiving a plausible PNG that is not the one they asked for.
 
-    ``bool`` is refused despite being an ``int`` subclass, because it is the one that
-    does not render as a number: ``width_px=True`` would emit ``--w: Truepx``.
+    ``int(value)`` is the *narrowing*, and it converts nothing the check admitted:
+    every value reaching it is already an ``int``. What it strips is the subclass.
+    ``isinstance`` accepts any ``int`` subclass, and a subclass brings its own
+    ``__str__`` -- ``class Evil(int): __str__ = lambda self: "0} body{display:none}
+    /*"`` passes the contract check honestly, and then Jinja renders it through
+    ``markupsafe.escape``, which calls ``str()`` and escapes only ``<>&"'``, so
+    ``{``, ``}``, ``;`` and ``/*`` all survive into the sheet. Measured that way:
+    ``--w: 0} body{display:none} /*px``. A plain ``int`` has no overridable
+    ``str()``, which is the whole point, and returning one also makes the declared
+    return type honest.
+
+    ``ValueError``, not ``TypeError``: ``Composer`` in ``core/ports.py`` declares
+    this stage raises ``ValueError`` and ``OSError`` and nothing else, so
+    ``TypeError`` widened a shared contract for no gain -- ``ValueError`` was already
+    permitted. The message names the field, which the interpreter's own does not: a
+    hostile ``width_px`` used to die one frame down in :func:`_gutter` as "can't
+    multiply sequence by non-int of type 'float'", which mentions neither
+    ``RenderOptions`` nor the page width.
+
+    ``bool`` is the one ``int`` subclass the narrowing must not rescue, which is why
+    its arm comes first. Left alone it does not render as a number at all --
+    ``width_px=True`` emits ``--w: Truepx``, which a browser drops, laying the page out
+    at the fallback width -- and narrowed it becomes a one-pixel page. Neither is what
+    a caller passing ``True`` meant, and no reading of ``True`` is a page size, so it
+    is refused ahead of both.
     """
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(
+        raise ValueError(
             f"RenderOptions.{field} must be an int, not "
             f"{type(value).__name__} ({value!r}); it is interpolated into the "
             "stylesheet as a CSS length, which nothing downstream escapes"
         )
-    return value
+    return int(value)
 
 
 def _css_px_or_none(value: object, field: str) -> int | None:

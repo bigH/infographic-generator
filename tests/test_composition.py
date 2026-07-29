@@ -1291,8 +1291,18 @@ GEOMETRIES = pytest.mark.parametrize(
     ("field", "benign", "declaration"), GEOMETRY_SINKS, ids=GEOMETRY_IDS
 )
 GEOMETRY_FIELDS = pytest.mark.parametrize("field", GEOMETRY_IDS)
-"""The same axis for the fence that needs only the field name, so it does not have
-to accept two arguments it never reads."""
+"""The same axis for the fences that do not want the value as a second parameter.
+
+Either because they never read it -- the refusal fences supply their own hostile
+value -- or because they need it in two forms at once and a separate parameter would
+be a second copy free to drift from the table. Those read it back out of
+``GEOMETRY_SINK_BY_FIELD``."""
+
+GEOMETRY_SINK_BY_FIELD: Final[Mapping[str, tuple[int, str]]] = MappingProxyType(
+    {field: (benign, declaration) for field, benign, declaration in GEOMETRY_SINKS}
+)
+"""``GEOMETRY_SINKS`` keyed by field, for the fences carried on ``GEOMETRY_FIELDS``."""
+
 
 MIN_STYLESHEET_BLOCKS: Final = 60
 """Rule blocks a whole sheet clears, counted by opening brace.
@@ -1305,6 +1315,31 @@ shared fixture library, and have ``test_css_injection`` import them.
 
 ``HtmlComposer()`` composes ``stat_grid``, measured at 80 blocks; chrome alone is 44,
 so the floor is clear of a page that lost its body sheet entirely."""
+
+
+class HostileStrInt(int):
+    """A real ``int`` whose ``str()`` is a CSS escape.
+
+    ``isinstance(HostileStrInt(917), int)`` is ``True``, so this *satisfies* the
+    contract ``_css_px`` checks -- the annotation says ``int`` and this is one --
+    which is exactly why refusing it would be the wrong answer. What it does not
+    satisfy is the unwritten half: that a pixel count renders as digits. Jinja hands
+    every value to ``markupsafe.escape``, which calls ``str()`` and escapes only
+    ``<>&"'``, so ``{``, ``}``, ``;`` and ``/*`` arrive in the sheet untouched.
+
+    ``__str__`` alone, with no ``__format__``: the templates interpolate rather than
+    format, so ``str()`` is the only hook the payload needs, and overriding both would
+    leave it ambiguous which one carried it.
+
+    The real digits are kept as a prefix so that the benign declaration
+    ``GEOMETRY_SINKS`` names is present exactly when the value has been narrowed to a
+    plain ``int`` and absent when it has not. ``--w: 917auto} body{display:none} /*px``
+    still contains ``--w: 917``, so only the whole declaration, ``px`` and all, tells
+    the narrowed sheet from the leaking one.
+    """
+
+    def __str__(self) -> str:
+        return f"{int(self)}{CSS_LENGTH_PAYLOAD}"
 
 
 def geometry(field: str, value: object) -> RenderOptions:
@@ -1370,30 +1405,45 @@ async def test_a_page_dimension_really_does_reach_the_stylesheet(
     )
 
 
-async def refusal_message(field: str) -> str:
-    """Compose with the payload in ``field`` and return the ``TypeError`` it raised.
+async def refusal_for(field: str, value: object) -> str:
+    """Compose with ``value`` in ``field`` and return the ``ValueError`` it raised.
+
+    ``ValueError`` and nothing wider: ``Composer`` in ``core/ports.py`` declares this
+    stage raises ``ValueError`` and ``OSError``, so a refusal arriving as any other
+    class is a port contract that grew without anyone agreeing to it. Catching only
+    ``ValueError`` lets that escape as an error rather than passing quietly.
 
     Fails the calling test -- quoting the sheet -- when the compose *succeeds*,
-    because there are only two ways it can: the payload became a CSS length, or it
+    because there are only two ways it can: the value became a CSS length, or it
     was silently clamped or defaulted into a plausible one. A ``pytest.raises`` here
     would report a bare "DID NOT RAISE" and throw that evidence away, and the leaked
     stylesheet is precisely what someone who just deleted the coercion needs to read.
     """
     try:
-        css = await geometry_stylesheet(field, CSS_LENGTH_PAYLOAD)
-    except TypeError as error:
+        css = await geometry_stylesheet(field, value)
+    except ValueError as error:
         return str(error)
     leaked = [signature for signature in CSS_LENGTH_SIGNATURES if signature in css]
     found = min((css.find(signature) for signature in leaked), default=0)
     pytest.fail(
-        f"RenderOptions.{field}={CSS_LENGTH_PAYLOAD!r} composed without error. "
+        f"RenderOptions.{field}={value!r} composed without error. "
         f"Signatures reaching the <style> element: {leaked}, around "
         f"{css[max(0, found - 70) : found + 90]!r}. Autoescape is HTML-only, so "
         "nothing downstream escapes a CSS length. An empty signature list here "
-        "instead means the value was quietly clamped or defaulted, which is the "
-        "other outcome the coercion refuses: the caller would get a plausible PNG "
-        "that is not the one they asked for."
+        "instead means the value was quietly clamped, defaulted, or rendered into "
+        "something a browser drops, which is the other outcome the coercion refuses: "
+        "the caller would get a plausible PNG that is not the one they asked for."
     )
+
+
+async def refusal_message(field: str) -> str:
+    """The refusal ``CSS_LENGTH_PAYLOAD`` earns in ``field``.
+
+    A ``str`` where a pixel count belongs, run through :func:`refusal_for`, which is
+    where the ``ValueError`` is caught and where a compose that succeeded instead is
+    turned into a failure that quotes the leaked sheet.
+    """
+    return await refusal_for(field, CSS_LENGTH_PAYLOAD)
 
 
 @GEOMETRY_FIELDS
@@ -1406,14 +1456,19 @@ async def test_a_hostile_page_dimension_is_refused_before_it_reaches_css(
     is no ``Composition`` and therefore no ``<style>`` element for the payload to be
     in, while the test above has already proved this field does reach a real one.
 
-    The message is matched, not merely the exception class. Both fields raised
-    ``TypeError`` before the coercion existed, but only one of them for a reason
-    anybody chose: a hostile ``width_px`` died inside ``_gutter`` as "can't multiply
-    sequence by non-int of type 'float'" -- accidental protection that names neither
-    ``RenderOptions`` nor the page width -- while a hostile ``height_px`` sailed
-    straight through into the sheet. A bare ``pytest.raises(TypeError)`` would have
-    been green on the first field for a reason nobody chose, which is exactly the
-    kind of pass this fence exists to refuse.
+    The message is matched, not merely the exception class, because before the
+    coercion existed one of these two fields already raised -- for a reason nobody
+    chose. A hostile ``width_px`` died one frame down inside ``_gutter`` as "can't
+    multiply sequence by non-int of type 'float'": accidental protection, and a
+    ``TypeError`` naming neither ``RenderOptions`` nor the page width. A hostile
+    ``height_px`` sailed straight through into the sheet. Asserting only that
+    *something* was raised would have been green on the first field on the strength of
+    that accident, which is exactly the kind of pass this fence exists to refuse.
+
+    The class is now ``ValueError`` -- :func:`refusal_for` catches nothing else --
+    because ``core/ports.py`` permits ``Composer.compose`` only ``ValueError`` and
+    ``OSError``, and the accidental ``TypeError`` from ``_gutter`` was never in that
+    set to begin with.
     """
     message = await refusal_message(field)
 
@@ -1421,6 +1476,106 @@ async def test_a_hostile_page_dimension_is_refused_before_it_reaches_css(
         f"RenderOptions.{field} was refused, but not by the boundary coercion in "
         f"layout.py: {message!r}. Some other frame raised first, so this cell says "
         "nothing about whether a string can reach CSS as a page dimension"
+    )
+
+
+@GEOMETRY_FIELDS
+async def test_an_int_subclass_cannot_rewrite_the_css_length_it_renders_as(
+    field: str,
+) -> None:
+    """The hole the string payload above leaves open: a value that *is* an ``int``.
+
+    ``isinstance`` is the right contract check and the wrong last word. It admits
+    every subclass of ``int``, and a subclass owns its ``__str__``, so
+    :class:`HostileStrInt` clears the check honestly and then writes whatever it likes
+    into ``<style>`` -- Jinja renders through ``markupsafe.escape``, which escapes
+    ``<>&"'`` and leaves ``{``, ``}``, ``;`` and ``/*`` alone. Measured against
+    ``width_px`` while ``_css_px`` returned its argument unchanged: the document carried
+    ``--w: 917auto} body{display:none} /*px;``, a live ``display:none`` on ``body``.
+
+    So this cell is deliberately shaped the opposite way from the one above. Refusal
+    would be the *wrong* outcome -- the value satisfies the declared type -- and the
+    fix is a narrowing, ``return int(value)``, whose whole effect is to hand the
+    template a plain ``int`` whose ``str()`` nobody can override. Three claims, because
+    the bug satisfies only the first of them: the compose survives, the payload is not
+    in the sheet, and the number the subclass really holds is.
+    """
+    benign, declaration = GEOMETRY_SINK_BY_FIELD[field]
+    hostile = HostileStrInt(benign)
+
+    try:
+        css = await geometry_stylesheet(field, hostile)
+    except ValueError as refused:
+        pytest.fail(
+            f"RenderOptions.{field}={hostile!r} was refused: {refused}. It is an int "
+            f"-- isinstance({hostile!r}, int) is True -- so the declared contract is "
+            "satisfied and refusing it rejects a legitimate page size. The subclass "
+            "has to be narrowed away, not turned away"
+        )
+
+    written = css.count(declaration)
+    leaked = [signature for signature in CSS_LENGTH_SIGNATURES if signature in css]
+    found = min((css.find(signature) for signature in leaked), default=0)
+
+    assert not leaked, (
+        f"an int subclass put {leaked} into the stylesheet through "
+        f"RenderOptions.{field}, around {css[max(0, found - 70) : found + 90]!r}. "
+        f"str() of the value is {str(hostile)!r} and markupsafe escapes only "
+        "<>&\"'; the value has to be narrowed to a plain int on the way in, because "
+        "the type check cannot tell a subclass from the class"
+    )
+    assert written, (
+        f"RenderOptions.{field}={int(hostile)} writes {declaration!r} into the sheet "
+        f"{written} times, so the absence asserted above was measured somewhere the "
+        f"value never arrived. The subclass holds {int(hostile)} and must render as "
+        f"it. Sheet begins {elide(css)!r}"
+    )
+
+
+@GEOMETRY_FIELDS
+async def test_a_bool_page_dimension_is_refused_though_bool_is_an_int(
+    field: str,
+) -> None:
+    """The one ``int`` subclass narrowing must not rescue: ``True``.
+
+    ``isinstance(True, int)`` is ``True``, so ``bool`` reaches this door with the same
+    credentials as :class:`HostileStrInt`, and the two are handled in opposite ways on
+    purpose. ``bool`` is the subclass that does not render as a number: un-narrowed,
+    ``width_px=True`` emits ``--w: Truepx``, an invalid length the browser discards, so
+    the page silently lays out at whatever the fallback is. Narrowed, ``int(True)`` is
+    ``1`` and the caller gets a one-pixel PNG. Both are a plausible-looking render that
+    is not the one asked for, and no reading of ``True`` is a page size, so it is
+    refused ahead of both -- which is why the ``bool`` arm of the guard is written
+    before the ``isinstance`` check rather than after it.
+
+    That decision has been in the code since the guard was written and asserted
+    nowhere, so deleting ``isinstance(value, bool) or`` stayed green. This cell is what
+    makes it cost something.
+
+    The message is matched rather than the class alone, for the same reason as the
+    string fence: ``True`` multiplies and compares like ``1``, so it travels a long way
+    into layout before anything downstream would object, and a bare
+    ``pytest.raises(ValueError)`` could be satisfied by a frame that never heard of
+    ``RenderOptions``.
+    """
+    message = await refusal_for(field, True)
+
+    assert re.search(rf"RenderOptions\.{field} must be an int, not bool", message), (
+        f"RenderOptions.{field}=True was refused, but not as a bool by the boundary "
+        f"coercion in layout.py: {message!r}. Either some other frame raised first or "
+        "the guard now reports it as something else, and either way this cell no "
+        "longer says a bool is rejected for being one"
+    )
+    named = [
+        token
+        for token in (f"RenderOptions.{field}", "bool", "True", "CSS length")
+        if token in message
+    ]
+    assert len(named) == 4, (
+        f"the refusal names {len(named)} of the four things it has to, {named}, in "
+        f"{message!r}. A caller reading this out of a stack trace needs the field, the "
+        "type they passed, the value, and why a page dimension is the one place it "
+        "matters -- the interpreter's own message would have named none of them"
     )
 
 
