@@ -2849,7 +2849,7 @@ def test_every_hero_photograph_that_ships_is_covered_by_the_readback() -> None:
         f"{sorted(on_disk - set(HERO_FILENAMES))}, stale "
         f"{sorted(set(HERO_FILENAMES) - on_disk)}. A new hero photograph has to be "
         "proven legible under the scrim before it ships -- three of these five were "
-        "illegible under the previous gradient, worst 2.45:1"
+        "illegible under the previous gradient, worst 2.87:1"
     )
     assert set(HERO_FILENAMES) <= set(PANDA_CREDITS), (
         f"no credits.json entry for {sorted(set(HERO_FILENAMES) - set(PANDA_CREDITS))}"
@@ -3009,6 +3009,7 @@ HERO_CREDIT_READBACK_JS = """
     scrim: ink,
     inkAscent: metrics.actualBoundingBoxAscent,
     inkDescent: metrics.actualBoundingBoxDescent,
+    borderTopPx: parseFloat(style.borderTopWidth),
   };
 }
 """
@@ -3044,6 +3045,10 @@ class HeroReadback:
     scrim: RGB
     ink_ascent: float
     ink_descent: float
+    border_top_px: float
+    """The gradient paints the *padding* box, which is the border box only while this
+    is 0: a border would offset every stop from the box top the alpha model measures
+    against, silently."""
 
     @property
     def worst(self) -> float:
@@ -3067,6 +3072,7 @@ def read_hero_readback(measured: Mapping[str, object]) -> HeroReadback:
         scrim=_rgb(measured["scrim"]),
         ink_ascent=_number(measured["inkAscent"]),
         ink_descent=_number(measured["inkDescent"]),
+        border_top_px=_number(measured["borderTopPx"]),
     )
 
 
@@ -3087,6 +3093,16 @@ HERO_CREDIT_FOREGROUND: Final[RGB] = (0xEE, 0xEA, 0xDE)
 only so the browser can argmin over the band; the ratio Python asserts is recomputed
 from the colour the page itself reports."""
 
+SCRIM_PEAK_ALPHA: Final = 0.78
+"""The alpha ``.hero__credit``'s gradient reaches at its stop, pinned because the
+ratios this fence asserts are only safe *for this value*.
+
+Asserting the ratios alone is not enough, which is the whole reason this constant
+exists: a flat 0.30 peak still measures 6.16:1 over ``giant-panda-portrait.jpg`` and
+would pass, and a flat 1.0 passes on every photograph at a constant 16.748:1 -- the
+tautology the readback's docstring argues against. Neither is caught by a threshold,
+so the level itself is asserted."""
+
 
 @pytest.mark.parametrize("filename", HERO_FILENAMES)
 @BROWSER_LOOP
@@ -3098,10 +3114,11 @@ async def test_the_hero_credit_is_legible_over_every_real_hero_photograph(
 
     This is the only honest measure of text on an image and it is what found the
     bug. Under the previous scrim -- ``to top``, from 0.78 down to 0 -- the worst
-    pixel over the glyph band read 3.60, 7.88, 2.86, 4.71 and 2.45 across these five
-    photographs at 1200px: three of five illegible, and all five at 640px or under a
-    long Commons title, worst 1.34. It degraded as the caption wrapped, because the
-    ink band sat further up a fade that started at the bottom.
+    pixel over the glyph band read 4.71, 2.88, 2.87, 3.60 and 8.16 across
+    ``HERO_FILENAMES`` at the shipped 1200px default, so three of the five
+    photographs that ship were illegible in places. At 640px it read 3.34, 2.61,
+    2.28, 2.61 and 6.42: four of five, and worse rather than better, because a ramp
+    rising from the bottom of the box leaves every wrapped line further up it.
 
     The shipped scrim ramps *downward* to its 0.78 peak at 24px, which is the
     caption's own padding-top. The topmost ink pixel sits 27.8px below the box top,
@@ -3173,6 +3190,29 @@ async def test_the_hero_credit_is_legible_over_every_real_hero_photograph(
             "written for: the gradient ran to top, spending its peak on the padding "
             "below the text. Raise the stop to padding-top or lower padding-top to "
             "meet it; do not compensate by darkening the peak"
+        )
+        assert readback.min_alpha == SCRIM_PEAK_ALPHA, (
+            f"{filename} in {theme.value}: the scrim's peak is "
+            f"{readback.min_alpha:.3f}, not the {SCRIM_PEAK_ALPHA} this fence was "
+            "derived against. Both directions need an argument this test cannot make "
+            "for you. Lower, and the guarantee goes with it: 0.61 is where "
+            f"{_hex(readback.foreground[:3])} stops clearing 4.5:1 against a pure "
+            "white photograph, and below that the ratios above only stay green "
+            "because these five photographs happen to be dark in the right places. "
+            "Higher, and at 1.0 the scrim is opaque, every ratio above collapses to "
+            "the constant 16.748:1 with zero variance, and this test can no longer "
+            "fail on a contrast regression at all -- only on a geometry one. Re-derive "
+            "the guarantee, then move this constant."
+        )
+        assert readback.border_top_px == 0, (
+            f"{filename} in {theme.value}: .hero__credit now has a "
+            f"{readback.border_top_px}px top border. The gradient paints the padding "
+            "box, which has been the same box as the border box only because this rule "
+            "declared no border -- with one, every stop shifts down by the border width "
+            "while this readback still measures from the border-box top, so the alpha "
+            "it reports is wrong by that much and the flatness above can be satisfied "
+            "by a model that no longer matches the paint. Either drop the border or "
+            "re-derive the alpha model against the padding box."
         )
 
     worst_by_theme = {theme: readback.worst for theme, readback in measured.items()}

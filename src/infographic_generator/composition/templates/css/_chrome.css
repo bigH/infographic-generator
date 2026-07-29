@@ -164,8 +164,11 @@ li { list-style: none; }
    This is legally load-bearing text sitting on a photograph, and what was wrong
    with it was the gradient's *direction*, not its alpha. Running `to top` put the
    0.78 stop at the bottom of the box -- the 9px of padding below the glyphs -- so
-   the ink band sat at 0.44 alpha and the credit was read against the photograph:
-   2.45:1 on `giant-panda-full-body.jpg`, and 1.34:1 once the caption wrapped.
+   the ink band sat at 0.455-0.602 alpha on a one-line caption and the credit was
+   read against the photograph: 2.87:1 on `giant-panda-full-body.jpg` at the shipped
+   1200px default, and 2.28:1 at 640px, where that caption wraps to three lines and
+   the band drops to 0.279-0.670. Wrapping made it worse rather than better, because
+   a ramp rising from the bottom leaves each new line further up it.
 
    Running the ramp downward to its peak at 24px, which is this rule's own
    padding-top, fixes it: measured in chromium the topmost ink pixel sits 27.8px

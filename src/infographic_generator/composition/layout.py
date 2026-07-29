@@ -401,6 +401,13 @@ def _credits_of(body: PageBody) -> tuple[Credit, ...]:
     state that a work was modified attaches to the use and not to the file.
     ``dict.fromkeys`` keeps the first occurrence, which is the order this
     docstring promises.
+
+    The key is every field :class:`Credit` has and therefore every field the
+    colophon prints, so "would render identically" and "compares equal" are the
+    same statement by construction -- add a field to ``Credit`` and it joins the
+    key. The residue is two genuinely different photographs whose attribution
+    coincides in all six: same author, same licence, no source either side. They
+    collapse to one row, and one row is all the page could say about them anyway.
     """
     return tuple(
         dict.fromkeys(
