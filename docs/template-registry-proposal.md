@@ -2,7 +2,13 @@
 
 **To:** the zone-3 owner (`composition/`, `render/`)
 **From:** the author of the closed `infographic-agent-scaffold` branch
-**Status:** proposal only — no code in this change. Nothing here has been implemented.
+**Status:** part record, part open ask. Most of this shipped in four commits on `main`: the
+six-entry registry and deterministic selection (`3244ad6`), the `PageChrome`/per-template-body
+split with `_base.html.j2` and per-template CSS (`cdaa330`), the `process_flow` and `ranked_list`
+bodies (`8f0ecde`), and the two-call `AgentComposer` (`f34ee08`). Three templates render; three
+are registered and `blocked_on` a core field. The body below is unchanged apart from additions —
+its reasoning is the rationale for what was built. What is still open is §"The ask to the
+Architect" and §"The ask"; what deviated is in §"What shipped, and where it deviated".
 
 ## Why you are reading this
 
@@ -24,6 +30,9 @@ actually exist on `main`:
 
 Everything below is a request, not a change. `composition/` is yours; `core/` and
 `pyproject.toml` are the Architect's. The only file I have added is this one.
+
+*(Written before implementation. `composition/` has since been added to — see the status line and
+§"What shipped, and where it deviated". `core/` and `pyproject.toml` are still untouched.)*
 
 ## What I got wrong, so you can discount it appropriately
 
@@ -140,6 +149,41 @@ The chain should be `selection → deterministic rule table → today's layout`,
 `HtmlComposer` stays the always-works default that offline tests use. Low confidence from call 1
 should fall through to the rule table rather than be trusted.
 
+## `learning_preference` — the one input this document left out
+
+The archived branch's selection prompt read a third input I omitted above, and it deserves its own
+section because it is the only orphan of that prompt: `learning_preference`, one of `text_heavy`,
+`image_heavy` or `balanced`. On the branch it was an untyped `str` on the content payload
+(`contracts/content.py:21`), interpolated straight into both prompts.
+
+It now lives in `brief.extras["composition.learning_preference"]`, read by
+`selection.learning_preference_of`, which lowercases and strips the value and returns `BALANCED`
+for anything absent, empty or unrecognised. It never raises — `models.py:81-84` documents "ignore
+keys outside your namespace and never raise on an unknown key" for the `composition.*` namespace,
+and a garbled hint must not cost a render.
+
+`extras` rather than a field on `Brief` for the same reason as the template override: **zero
+`core/` change**, and no `cli.py` change, so it is outside both the Architect's zone and the shared
+no-owner zone. The cost is that `extras` is a `Mapping[str, str]`, so the value arrives as a string
+and is parsed into a `LearningPreference` `StrEnum` at the edge — and that enum lives in
+`composition/selection.py`, not in `core/`, which is where it belongs while it is one zone's
+concern.
+
+It is a **tiebreaker only, never a driver**. `choose_template` decides on content shape first: many
+facts with few sections gives `ranked_list`, sections outnumbering facts gives `process_flow`. The
+preference is read only in the third branch, where neither shape rule fired — `TEXT_HEAVY` with at
+least one section tips to `process_flow` at confidence 0.6, `IMAGE_HEAVY` with at least one image
+keeps `stat_grid` but raises confidence from 0.5 to 0.6. When a shape rule fires the preference is
+not consulted at all, so it cannot overturn an unambiguous signal;
+`test_preference_never_overrides_an_unambiguous_shape` pins that by asserting the choice is
+identical across all three preferences. That ranking mirrors the archived prompt, which listed
+content shape first and the preference second.
+
+Two honest limits. No registry entry's `selection_hint` mentions image-weight at all, so an LLM
+selector handed the census has to infer what the preference should imply on its own — the hints
+describe content shape only. And nothing in the pipeline populates the key today: `cli.py` and
+`pipeline.py` never write `extras`. It is a hook for a caller, not a live feature.
+
 ## Per-template view models — the part that is actually hard
 
 This is where a registry stops being cheap, and I want to be straight about it rather than sell
@@ -243,6 +287,42 @@ machinery, and `timeline`/`comparison`/`quote_spotlight` simply never get chosen
 degrades to the templates whose data it can actually fill. That is a reasonable v1 and a reason
 to build selection before asking for fields.
 
+## The ask to the Architect — three additive core fields
+
+**To: the Architect.** One decidable question, and §"Which `core/models.py` fields would have to be
+added" is the argument for it; this section is only the ask. Three additions to `core/models.py`:
+
+- `Fact.when: str | None = None`
+- `Quote` (`text`, `speaker`, `context`, `source`, all but `text` defaulted) and
+  `ResearchContent.quotes: Sequence[Quote] = ()`
+- `ComparisonPair` (`dimension`, `left_value`, `right_value`, plus defaulted `left_label`,
+  `right_label`, `unit`, `source`) and `ResearchContent.comparisons: Sequence[ComparisonPair] = ()`
+
+All three are additive and defaulted, so a frozen slotted dataclass takes them without breaking a
+single existing construction site: every existing test and the panda stub keep passing untouched.
+Each unblocks exactly one template — `Fact.when` → `timeline`, `Quote` → `quote_spotlight`,
+`ComparisonPair` → `comparison`.
+
+**Nothing is blocked on this decision.** All three are already registered in `registry.py` with
+their `selection_hint` and a `blocked_on` string naming the missing field, and the selector is
+structurally incapable of choosing one: `choose_template` only ever returns literals from
+`RENDERABLE_TEMPLATE_IDS`, `resolve_choice` and `build_page_for` both re-check, and the LLM
+selector's response schema types `template_id` as a `Literal` over the renderable ids only. The
+registry degrades to what it can render, and three of six templates ship working.
+
+On a **yes**, the three bodies and templates get written; unblocking is then a `blocked_on = None`
+plus a body builder in `layout._BUILDERS` and a `.j2`/`.css` pair. On a **no**, the three entries
+stay registered and unreachable, carrying their reasoning in `blocked_on` where the next reader will
+find it. That is a stable end state, not debt, and it is an acceptable outcome — say no if the
+answer is no.
+
+Two things this work did **not** resolve, and neither is yours to decide — both need a human:
+whether a PNG composed from the two `CC-BY-SA-4.0` panda images inherits ShareAlike (parked in
+`CLAUDE.md` and `docs/plan.md`), and the `quote_spotlight` legibility problem — a `BACKGROUND`
+image carries full attribution obligations, and attribution over a busy photo is exactly where
+"visible in the rendered output" quietly stops being true. The second is a reason to answer the
+`Quote` question and the legibility question together.
+
 ## What we drop from the branch, explicitly
 
 - **`pip`** → `uv` for everything.
@@ -308,6 +388,43 @@ dropped rather than built alongside it. Please pick one.
   from the two `CC-BY-SA-4.0` panda images inherits ShareAlike. Six templates multiply the
   compositions that question applies to; it still needs a human, and it is not mine to answer.
 
+## What shipped, and where it deviated
+
+Where the four commits departed from what is proposed above, so the rest of the document can be
+trusted:
+
+- **`infographic.html.j2` was deleted, not kept as an alias.** `composer.TEMPLATE_NAME` is now
+  `stat_grid.html.j2`, extending `_base.html.j2`. `stat_grid` output was verified byte-identical to
+  the old template's across twelve cases — both themes, zero through five images, a fact list
+  crossing the row break, fixed-height and full-page, RTL, empty content — and no pre-existing
+  test changed.
+- **Per-template CSS lives in `templates/css/*.css`** and is pulled into the single inline `<style>`
+  with Jinja `{% include %}` through the one autoescaped environment — deliberately not
+  `Path.read_text` plus `|safe`, which would have put a second escaping story in the package.
+- **`chrome.credits` is keyed off the figures the body actually places** (`layout._credits_of` over
+  `_figures_of`), as proposed. **The companion idea was not taken:** assets are still encoded
+  eagerly, because `tests/test_composition.py`'s `test_missing_path_backed_asset_raises_oserror`
+  requires `OSError` to reach the caller. So the render-time saving of calling `to_data_uri` only
+  for displayed images was *not* realised, and taking it is a contract change against `ports.py`,
+  not a cleanup.
+- **Graceful image degradation applies to the new bodies only.** `build_process_flow_page` and
+  `build_ranked_list_page` go through `_readable_figures`, which skips an unreadable asset with a
+  logged warning — never a placeholder, and therefore never credited either. `build_page` /
+  `stat_grid` still propagates `OSError`. The asymmetry is deliberate and documented in
+  `build_page`'s docstring: the default path is what `ports.py` and the test pin, while a layout
+  chosen for a *shape* should not lose the whole page to one bad file. Making the two consistent is
+  a `ports.py` conversation.
+- **`HtmlComposer` gained a keyword-only `template_id`**, which picks both the body builder and the
+  template file and degrades to `stat_grid` on an unknown or blocked id. `template_name` stays the
+  raw escape hatch.
+- **`AgentComposer` is opt-in and unwired.** Neither `pipeline.py` nor `cli.py` references it;
+  `cli.py` still constructs `HtmlComposer()`. With no key and no injected selector or mapper it is
+  exactly the deterministic path.
+- **The `ports.py:103-105` overlap question in §"What this replaces" is still open.** Nobody has
+  answered whether the registry or the emit-HTML agent is the plan. The code landed as the
+  deterministic stepping stone and may duplicate in-flight zone-3 work; that is a live risk, not a
+  resolved one.
+
 ### The ask
 
 1. Do you want a registry at all, or is the emit-HTML agent the plan?
@@ -318,3 +435,9 @@ dropped rather than built alongside it. Please pick one.
 
 I have not touched `core/`, `pyproject.toml`, `composition/` or `render/`. Happy to implement
 whatever survives this, in your zone, to your design.
+
+*(Since answered by building it: `composition/` now holds `registry.py`, `selection.py`,
+`agent_composer.py`, the chrome/body split and three template bodies. `core/`, `pyproject.toml`,
+`render/`, `pipeline.py` and `cli.py` are untouched. All three questions above are still worth
+answering — question 2 now about a split that has already landed, so answering "no" means asking
+for it back out.)*

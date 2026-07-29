@@ -14,7 +14,9 @@ single stage:
 
 The HTML itself is always produced by rendering a human-written registry
 template through :class:`~infographic_generator.composition.composer.HtmlComposer`
--- the one Jinja2 environment in the package, with ``autoescape=True``. That is
+-- the package's only ``Environment`` construction site, with ``autoescape=True``
+and ``StrictUndefined``. Each ``HtmlComposer`` builds its own instance from that
+one site, so there is no second set of escaping settings to diverge. That is
 what keeps escaping, self-containment and visible attribution true on the model
 path as much as on the deterministic one.
 
@@ -665,7 +667,12 @@ class AgentComposer:
         return mapping
 
     def _composer_for(self, template_id: str) -> HtmlComposer:
-        """One ``HtmlComposer`` per layout: one Jinja2 environment, reused."""
+        """One cached ``HtmlComposer`` per layout, so a template is loaded once.
+
+        Each carries its own ``Environment``, all built by the single
+        construction site in :mod:`composer`; none of them can differ in
+        ``autoescape`` or ``undefined``.
+        """
         composer = self._composers.get(template_id)
         if composer is None:
             composer = HtmlComposer(template_id=template_id)
