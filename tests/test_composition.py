@@ -568,6 +568,11 @@ BROWSER_LOOP = pytest.mark.asyncio(loop_scope="module")
 """Tests sharing the module-scoped browser must share its event loop too:
 playwright objects belong to the loop that created them."""
 
+MISSING_CHROMIUM: Final = "Executable doesn't exist"
+"""What playwright says when chromium was never downloaded -- the one browser failure
+that is a skip rather than a bug. Every other ``playwright.async_api.Error`` describes
+a browser that exists and then misbehaved, and has to reach the report."""
+
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def chromium() -> AsyncIterator[Browser]:
@@ -583,6 +588,14 @@ async def chromium() -> AsyncIterator[Browser]:
         try:
             browser = await playwright.chromium.launch()
         except PlaywrightError as error:  # pragma: no cover - browser not installed
+            # ``Error`` is the base class of every playwright exception, so skipping on
+            # it whole also swallowed a chromium that launched and died ("Target page,
+            # context or browser has been closed"). There is no CI workflow here, so a
+            # silent skip on a live browser failure reads exactly like a green suite --
+            # for the ~80 cells that depend on this fixture. Only an absent executable
+            # is a skip; everything else has to be raised.
+            if MISSING_CHROMIUM not in str(error):
+                raise
             pytest.skip(f"chromium is unavailable: {error}")
         try:
             yield browser
@@ -1539,6 +1552,11 @@ async def test_licence_uris_are_rendered_exactly_as_supplied(
     ``.credit__license``, so every licence URI rendered UPPERCASED -- unusable,
     because a URI in a PNG has to be retyped by hand. The markup was right the
     whole time, which is why only the rendered page can catch it.
+
+    Both halves are measured, not read off ``innerText``. ``document.body.innerText``
+    silently degrades to ``textContent`` the moment anything above the credits is
+    ``display: none``, so "the URI is on the page" has to mean a span with real height
+    and no hidden ancestor -- see ``CREDIT_URL_VISIBILITY_JS``.
     """
     # Iterating PANDAS holds only while every body displays all of them. At six
     # assets stat_grid renders four images and four credits -- a hero plus a band
@@ -1548,13 +1566,49 @@ async def test_licence_uris_are_rendered_exactly_as_supplied(
     composition = await compose_cell(template_id, theme, make_content(), images)
 
     async with laid_out(chromium, composition) as page:
-        transformed: list[dict[str, str]] = await page.evaluate(TRANSFORMED_URL_TEXT_JS)
+        measured: dict[str, object] = await page.evaluate(TRANSFORMED_URL_TEXT_JS)
+        shown: dict[str, object] = await page.evaluate(CREDIT_URL_VISIBILITY_JS)
         rendered: str = await page.evaluate("document.body.innerText")
 
+    examined = int(_number(measured["examined"]))
+    transformed = [_fields(row) for row in _rows(measured["offenders"])]
+    spans = int(_number(shown["examined"]))
+    visible_chars = int(_number(shown["visible_text"]))
+    hidden = [_fields(row) for row in _rows(shown["offenders"])]
+
+    assert examined >= MIN_EXAMINED_URI_ELEMENTS, (
+        f"{template_id} in {theme.value} rendered only {examined} elements whose own "
+        f"text holds a URI, under the {MIN_EXAMINED_URI_ELEMENTS} this fence needs to "
+        "mean anything: nothing was judged, so nothing could be found corrupted"
+    )
     assert not transformed, (
         "text containing a URI is being case-transformed by CSS, which corrupts it: "
         f"{transformed}"
     )
+
+    assert spans >= 2 * len(PANDAS), (
+        f"{template_id} in {theme.value} rendered {spans} .credit__url spans, not the "
+        f"{2 * len(PANDAS)} the {len(PANDAS)} fixtures owe (a licence URI and a source "
+        "URI each), so the visibility measurement below covers less than the loop after"
+    )
+    assert not hidden, (
+        f"in {template_id} in {theme.value} a licence URI is in the markup but not on "
+        "the page; attribution has to be legible in the PNG, not merely present in "
+        "the DOM:\n"
+        + "\n".join(
+            f"  {row['element']} hidden by {row['hidden_by']} "
+            f"(display: {row['display']}, visibility: {row['visibility']}, "
+            f"height: {row['height_px']}px)"
+            for row in hidden
+        )
+    )
+    assert visible_chars >= MIN_VISIBLE_CREDIT_URL_CHARS, (
+        f"{template_id} in {theme.value} shows {visible_chars} characters of licence "
+        f"URI across {spans} visible spans, under the "
+        f"{MIN_VISIBLE_CREDIT_URL_CHARS} this fence needs: the spans have height but "
+        "their text is not reaching them"
+    )
+
     for panda in PANDAS:
         for url in (panda.license_url, panda.source_url):
             assert url != url.upper(), (
@@ -1576,11 +1630,13 @@ TRANSFORMED_URL_TEXT_JS = """
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const offenders = [];
   const seen = new Set();
+  let examined = 0;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (!node.nodeValue.includes('://')) continue;
     const el = node.parentElement;
     if (!el || seen.has(el)) continue;
     seen.add(el);
+    examined += 1;
     const transform = getComputedStyle(el).textTransform;
     if (transform !== 'none') {
       offenders.push({
@@ -1590,11 +1646,91 @@ TRANSFORMED_URL_TEXT_JS = """
       });
     }
   }
-  return offenders;
+  return {examined, offenders};
 }
 """
 """Own text nodes only. Judging by ``textContent`` would blame ``<body>`` for
-every URI on the page and report a uniform false positive."""
+every URI on the page and report a uniform false positive.
+
+``examined`` is every URI-bearing element the walk actually judged -- counted after
+the ``'://'`` filter and the ``seen`` dedupe, so it is the number of computed
+``text-transform`` values compared and not the number of text nodes crossed. Without
+it ``not offenders`` is green for a page that rendered no URI at all, which is the
+same page every assertion below is trying to reject."""
+
+MIN_EXAMINED_URI_ELEMENTS: Final = 6
+"""Measured: 7 in all six cells of this fence -- the six ``span.credit__url`` the
+assertions below transcribe, plus the bibliography's single ``span.refs__meta``. The
+floor sits at six because six is what the loop below names: a page that dropped the
+bibliography is still worth judging, and a page that dropped the colophon must not
+pass by having nothing left to uppercase."""
+
+
+CREDIT_URL_VISIBILITY_JS = """
+() => {
+  const name = el =>
+    el.tagName.toLowerCase() + (el.className ? '.' + el.className : '');
+  const offenders = [];
+  let examined = 0;
+  let visible_text = 0;
+  outer:
+  for (const url of document.querySelectorAll('span.credit__url')) {
+    examined += 1;
+    for (let ancestor = url; ancestor; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor);
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        offenders.push({
+          element: name(url),
+          hidden_by: name(ancestor),
+          display: style.display,
+          visibility: style.visibility,
+          height_px: url.getBoundingClientRect().height,
+        });
+        continue outer;
+      }
+    }
+    const style = getComputedStyle(url);
+    const height = Math.min(url.offsetHeight, url.getBoundingClientRect().height);
+    if (height < 1) {
+      offenders.push({
+        element: name(url),
+        hidden_by: name(url),
+        display: style.display,
+        visibility: style.visibility,
+        height_px: height,
+      });
+      continue;
+    }
+    visible_text += url.innerText.trim().length;
+  }
+  return {examined, visible_text, offenders};
+}
+"""
+"""Each ``span.credit__url`` holds one licence or source URI and nothing else, and the
+loop below reads those URIs straight out of the page -- so each span has to be
+measured as *visible*, not merely present. ``document.body.innerText`` is not that
+measurement: put ``display: none`` on the body and it falls back to ``textContent``,
+which reported 1449 characters and passed all six licence assertions on a body whose
+own client rect measured 0px -- a page that painted nothing whatsoever.
+
+``display`` does not inherit, and a descendant of a ``display: none`` element still
+computes its own, so this has to climb to ``<body>`` rather than read one style. The
+label is what lets a hidden ancestor skip the *span* and keep counting the rest, where
+a bare ``break`` would fall out of the walk into the height check and blame the span
+itself. ``visibility`` does inherit, but is read on the way up anyway so a failure can
+name the ancestor that hid the span rather than the span that inherited from it.
+
+Height is the weaker of ``offsetHeight`` and the client rect: the first is a rounded
+integer, the second sub-pixel, and a span collapsed to 0.4px is gone from the PNG
+whichever way it rounds. ``visible_text`` is summed only over spans that cleared both
+checks, so ``examined`` and ``offenders`` cannot both come back empty and agree that
+the attribution is fine."""
+
+MIN_VISIBLE_CREDIT_URL_CHARS: Final = 300
+"""Measured: 321 visible characters across the six spans in every cell of this fence,
+which is the exact combined length of the six fixture URLs -- one URL per span, no
+other text in them. 300 leaves a fixture URL room to be renamed shorter while staying
+far above the ~50 that one surviving span would report."""
 
 
 ASPECT_RATIO_JS = """

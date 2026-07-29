@@ -149,11 +149,13 @@ def test_the_one_environment_still_autoescapes_strictly() -> None:
 
 @pytest.mark.parametrize("bypass", ESCAPE_BYPASSES)
 def test_no_escape_bypass_anywhere_under_src(bypass: str) -> None:
-    offenders = [
-        path
-        for path in (*python_sources(), *template_sources())
-        if bypass in path.read_text(encoding="utf-8")
-    ]
+    scanned = (*python_sources(), *template_sources())
+    assert len(scanned) >= 28, f"the walk collapsed: {len(scanned)} files, 32 today"
+    assert {"composer.py", "_base.html.j2", "_chrome.css"} <= {p.name for p in scanned}, (
+        f"a glob resolved to nothing: {sorted(path.name for path in scanned)}"
+    )
+
+    offenders = [path for path in scanned if bypass in path.read_text(encoding="utf-8")]
 
     assert not offenders, f"{bypass!r} appears in {offenders}"
 
@@ -202,5 +204,16 @@ async def test_credits_track_displayed_figures_without_duplicates() -> None:
     parsed = parse(composition.html)
 
     licences = [panda.license_text for panda in PANDAS]
+    assert licences, "no licences to walk makes the loop below vacuous"
+    assert len(parsed.classed("credit")) == len(images), (
+        "one colophon row per displayed figure -- the general relation is "
+        "min(len(images), 1 + _BAND_CAPACITY) = min(len(images), 4), which equals "
+        f"len(images) only while full_inputs() stays small (3 today, {len(images)} here)"
+    )
     for licence in licences:
-        assert parsed.text.count(licence) >= 1, f"missing licence: {licence}"
+        assert parsed.text_in("colophon").count(licence) == 1, (
+            f"the colophon must credit {licence} exactly once"
+        )
+        assert parsed.text.count(licence) == 2, (
+            f"{licence} belongs in one figure caption and one colophon row, nowhere else"
+        )
