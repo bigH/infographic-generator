@@ -507,6 +507,19 @@ PANDAS = (
     ),
 )
 
+PANDA_SET = tuple(
+    panda.as_asset(role=ImageRole.HERO if index == 0 else ImageRole.SUPPORTING)
+    for index, panda in enumerate(PANDAS)
+)
+"""The real photographs with the roles the imagery stage would give them.
+
+The explicit ``HERO`` documents intent and does not change the layout: ``_hero_index``
+promotes the first asset given when none carries ``HERO``, so this set lays out
+identically to a plain ``tuple(panda.as_asset() for panda in PANDAS)``. A lead asset
+of some kind is what narrows the masthead into a ``46fr 54fr`` grid track, the only
+configuration where the ``--fit`` cap on the title binds -- and ``images=()`` is the
+only thing that flattens the masthead back out."""
+
 
 # --------------------------------------------------------------------------- #
 # Shared assertions
@@ -556,8 +569,16 @@ async def chromium() -> AsyncIterator[Browser]:
 
 @asynccontextmanager
 async def laid_out(browser: Browser, composition: Composition) -> AsyncIterator[Page]:
-    """The composition in a DOM, under the renderer's own rules: viewport from the
-    composition, every network request aborted."""
+    """The composition in a DOM: viewport width from the composition, every network
+    request aborted exactly as ``render/`` aborts them.
+
+    Two things deliberately diverge from the renderer. JavaScript is left enabled
+    where ``render/`` sets ``java_script_enabled = False`` -- every measurement here
+    is taken through ``page.evaluate``, so it has to be. And the viewport height is a
+    fixed 900 where the renderer floors at 1px and lets a full-page screenshot grow;
+    height does not enter CSS layout for this page, whose sizing is driven by the
+    width and by container queries, so neither divergence can move a number measured
+    here."""
     page = await browser.new_page(
         viewport={"width": composition.width_px, "height": 900}
     )
@@ -1293,22 +1314,108 @@ OVERFLOW_JS = """
 """
 
 
+@pytest.mark.parametrize("images", [PANDA_SET, ()], ids=["hero", "no-images"])
+@pytest.mark.parametrize("width_px", [1200, 640])
 @BROWSER_LOOP
-async def test_nothing_overflows_the_box_it_is_laid_out_in(chromium: Browser) -> None:
+async def test_nothing_overflows_the_box_it_is_laid_out_in(
+    chromium: Browser, width_px: int, images: Sequence[ImageAsset]
+) -> None:
     """A screenshot has no scrollbars: anything outside its parent is either
     clipped away or painted over a neighbour. Band captions used to hang 27-58px
-    below their own ``<figure>``."""
-    images = tuple(panda.as_asset() for panda in PANDAS)
+    below their own ``<figure>``.
+
+    Width and images are crossed because the ``--fit`` cap only binds when the page
+    is narrow *and* a hero has squeezed the masthead into its own column, so neither
+    axis on its own reaches the code that derives it.
+    """
     content = make_content(facts=make_facts(7))
-    composition = await HtmlComposer().compose(make_brief(), content, images)
+    composition = await HtmlComposer().compose(
+        make_brief(options=RenderOptions(width_px=width_px)), content, images
+    )
 
     async with laid_out(chromium, composition) as page:
         offenders: list[dict[str, object]] = await page.evaluate(OVERFLOW_JS)
 
-    assert not offenders, "elements overflow their parents:\n" + "\n".join(
-        f"  {row['element']} overflows {row['parent']} "
-        f"({row['problem']}) by {row['pixels']}px"
-        for row in offenders
+    assert not offenders, (
+        f"at a {width_px}px page with {len(images)} images, "
+        "elements overflow their parents:\n"
+        + "\n".join(
+            f"  {row['element']} overflows {row['parent']} "
+            f"({row['problem']}) by {row['pixels']}px"
+            for row in offenders
+        )
+    )
+
+
+TITLE_LINES_JS = """
+() => {
+  const title = document.querySelector('h1.title');
+  const walker = document.createTreeWalker(title, NodeFilter.SHOW_TEXT);
+  const lines = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (let index = 0; index < node.data.length; index += 1) {
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + 1);
+      const rect = range.getBoundingClientRect();
+      if (rect.width < 0.01 && rect.height < 0.01) continue;
+      const line = lines.find(existing => Math.abs(existing.top - rect.top) < 0.5);
+      if (line) line.text += node.data[index];
+      else lines.push({top: rect.top, text: node.data[index]});
+    }
+  }
+  return lines.sort((a, b) => a.top - b.top).map(line => line.text.trim());
+}
+"""
+"""The title's lines, in order, read one character at a time and grouped on their
+``top`` to within half a pixel: glyphs of one font on one line share a ``top``
+exactly. ``VALUE_LINES_JS``'s overlap clustering cannot be reused here -- ``.title``
+sets ``line-height: 0.98``, so consecutive line boxes overlap and every line merges
+into one."""
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["The Giant Panda", "Giant Pandas by the Numbers"],
+    ids=["fixture-title", "shipped-title"],
+)
+@BROWSER_LOOP
+async def test_a_title_word_is_never_broken_to_make_it_fit(
+    chromium: Browser, title: str
+) -> None:
+    """A headline may wrap between its words; it may never break inside one. That is
+    exactly the guarantee ``_fit(_longest_word(title), _TITLE_ADVANCE)`` exists to
+    give, so joining the rendered lines back together must reproduce the title's
+    words exactly. A line count alone is too weak: a broken word hides inside it
+    whenever some other word already had a line to itself.
+
+    Both the fixture default and the title ``assets/panda/facts.json`` actually
+    ships are crossed, so the fence is anchored to shipped content rather than to
+    one fixture's favourable word lengths.
+
+    640px with a hero is the one configuration where that cap binds -- the masthead
+    text column narrows to 218px -- and since ``.title`` sets
+    ``overflow-wrap: anywhere``, an underestimated advance shows up here as a
+    mid-word break rather than as overflow, which the overflow fence cannot see.
+    """
+    content = make_content(title=title, facts=make_facts(7))
+    composition = await HtmlComposer().compose(
+        make_brief(options=RenderOptions(width_px=640)), content, PANDA_SET
+    )
+
+    async with laid_out(chromium, composition) as page:
+        lines: list[str] = await page.evaluate(TITLE_LINES_JS)
+
+    assert lines, (
+        f"the character-rect walk returned no lines at all for {title!r}, so the "
+        "reconstruction below would hold vacuously -- the walk or the markup broke"
+    )
+
+    words = title.split()
+    assert " ".join(lines).split() == words, (
+        f"the {len(words)}-word title {title!r} set on {len(lines)} lines "
+        f"{lines}, so at least one word was broken: the --fit cap derived from its "
+        "longest word is too generous for the type it allows"
     )
 
 

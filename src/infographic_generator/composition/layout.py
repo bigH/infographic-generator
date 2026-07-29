@@ -62,9 +62,18 @@ _MIN_ASPECT: Final = 0.68
 _MAX_ASPECT: Final = 1.85
 _FALLBACK_ASPECT: Final = 4 / 3
 
-_TITLE_ADVANCE: Final = 0.50
-"""Advance width of one display-bold glyph as a fraction of the font size, for
-the mixed-case prose of a headline."""
+_TITLE_ADVANCE: Final = 0.60
+"""Advance width of the widest realistic *single word* of a headline, as a
+fraction of the font size. :func:`_fit` is fed :func:`_longest_word`, not the
+whole string, so an average taken over a title would under-cap its longest word.
+Measured in chromium against the embedded display face: 0.5907em per glyph on
+``Numbers``, the worst word of the real ``assets/panda`` title, rounded up.
+
+It deliberately does not cover an all-caps acronym -- ``WWF`` sets at 0.989em --
+because inflating this to 0.99 would shrink every ordinary title by about 40% for
+a case no researcher emits. ``.title``'s ``overflow-wrap: anywhere`` is the
+backstop there: an under-capped word breaks rather than escaping the page.
+"""
 _VALUE_ADVANCE: Final = 0.60
 """Same, for a value: tabular figures in the embedded display face are exactly
 0.6em and a value is mostly figures, so this errs wide for prose-heavy values."""

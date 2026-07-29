@@ -182,7 +182,7 @@ def test_the_registry_is_unique_and_immutable() -> None:
         TEMPLATE_REGISTRY["stat_grid"] = TEMPLATE_REGISTRY["ranked_list"]  # type: ignore[index]
 
 
-@pytest.mark.parametrize("template_id", sorted(RENDERABLE_TEMPLATE_IDS))
+@pytest.mark.parametrize("template_id", sorted(RENDERABLE_IDS))
 def test_every_renderable_template_has_a_template_file_that_parses(
     template_id: str,
 ) -> None:
