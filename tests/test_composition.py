@@ -13,10 +13,11 @@ real chromium DOM against one browser shared by the whole module.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
 from types import MappingProxyType
@@ -26,6 +27,7 @@ import pytest
 import pytest_asyncio
 
 from infographic_generator.composition import HtmlComposer
+from infographic_generator.composition.composer import TEMPLATE_DIR
 from infographic_generator.composition.layout import _MIN_FIT_CQW, font_faces
 from infographic_generator.composition.registry import RENDERABLE_TEMPLATE_IDS
 from infographic_generator.core.encoding import to_data_uri
@@ -465,7 +467,13 @@ class PandaFixture:
         role: ImageRole = ImageRole.SUPPORTING,
         width_px: int = 1600,
         height_px: int = 1066,
+        *,
+        modified: bool = False,
     ) -> ImageAsset:
+        """``modified`` defaults to ``False`` to leave every existing caller alone,
+        but the real ``assets/panda/credits.json`` sets it on all five files -- and it
+        is the only thing that renders ``.credit__adapted``. A colophon fence built on
+        the default would measure a row the shipped pipeline never emits."""
         return ImageAsset(
             content=PANDA_DIR / self.filename,
             mime_type="image/jpeg",
@@ -477,6 +485,7 @@ class PandaFixture:
                 author=self.author,
                 license_url=self.license_url,
                 source=Source(url=self.source_url, title=self.filename),
+                modified=modified,
             ),
             role=role,
         )
@@ -1042,6 +1051,187 @@ async def test_a_blank_credit_renders_no_credit_row_at_all() -> None:
     )
     assert any(url.startswith("data:image/") for url in parsed.fetchable_urls), (
         "the image itself should still be displayed; only its empty credit is dropped"
+    )
+
+
+def varied_credit(
+    *,
+    author: str | None = None,
+    license_url: str | None = None,
+    work: str | None = None,
+    source_url: str | None = None,
+    modified: bool | None = None,
+) -> ImageAsset:
+    """``PANDAS[1]``'s photograph with exactly one attribution field changed.
+
+    Derived from the fixture rather than retyped, so the "differs in one field only"
+    premise cannot quietly become "differs in two" when the fixture is edited.
+    """
+    asset = PANDAS[1].as_asset()
+    source = asset.credit.source
+    assert source is not None, "PANDAS[1] must carry a Source for this to vary one"
+    return replace(
+        asset,
+        credit=replace(
+            asset.credit,
+            author=asset.credit.author if author is None else author,
+            license_url=(
+                asset.credit.license_url if license_url is None else license_url
+            ),
+            source=replace(
+                source,
+                title=source.title if work is None else work,
+                url=source.url if source_url is None else source_url,
+            ),
+            modified=asset.credit.modified if modified is None else modified,
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DistinctObligation:
+    """The same photograph under an attribution differing in exactly one field."""
+
+    field: str
+    variant: ImageAsset
+    marker: str
+    """A string only the variant renders, so a surviving second row is provably its
+    and not the first row counted twice."""
+
+
+DISTINCT_OBLIGATIONS: Final = (
+    DistinctObligation(
+        field="author",
+        variant=varied_credit(author="Another Photographer"),
+        marker="Another Photographer",
+    ),
+    DistinctObligation(
+        field="license_url",
+        variant=varied_credit(
+            license_url="https://creativecommons.org/licenses/by-sa/3.0/"
+        ),
+        marker="https://creativecommons.org/licenses/by-sa/3.0/",
+    ),
+    DistinctObligation(
+        field="work",
+        variant=varied_credit(work="A differently titled scan of the same photograph"),
+        marker="A differently titled scan of the same photograph",
+    ),
+    DistinctObligation(
+        field="source_url",
+        variant=varied_credit(
+            source_url="https://commons.wikimedia.org/wiki/File:A_second_file_page"
+        ),
+        marker="https://commons.wikimedia.org/wiki/File:A_second_file_page",
+    ),
+    DistinctObligation(
+        field="modified",
+        variant=varied_credit(modified=True),
+        marker="adapted from the original",
+    ),
+)
+"""One case per field ``_credits_of`` keys on. Every one of these is a *separate*
+legal obligation: CC BY names the author, not the licence, and CC BY-SA's duty to
+state that a work was modified attaches to the use rather than to the file. A
+de-duplication keyed on the licence string alone would collapse all five."""
+
+
+async def test_the_same_asset_supplied_twice_renders_one_credit_row() -> None:
+    """``_split_hero`` removes the hero by *index*, so ``images=(A, A)`` leaves the
+    same photograph in the band as well: two byte-identical ruled rows saying the
+    same thing. ``_credits_of`` keys on the whole ``Credit`` to collapse them."""
+    asset = PANDAS[1].as_asset(ImageRole.HERO)
+
+    composition = await HtmlComposer().compose(
+        make_brief(), make_content(), (asset, asset)
+    )
+    parsed = assert_structurally_valid(composition.html)
+
+    rows = parsed.classed("credit")
+    assert len(rows) == 1, (
+        f"the same photograph supplied twice rendered {len(rows)} credit rows; two "
+        "rows that would print identically are one obligation stated twice"
+    )
+    assert PANDAS[1].author in parsed.text_in("credits"), (
+        "the surviving row must still carry the attribution -- collapsing duplicates "
+        "may not drop the obligation with them"
+    )
+
+
+@pytest.mark.parametrize(
+    "case", DISTINCT_OBLIGATIONS, ids=[case.field for case in DISTINCT_OBLIGATIONS]
+)
+async def test_credits_differing_in_one_field_are_two_obligations(
+    case: DistinctObligation,
+) -> None:
+    """De-duplicate rows, never drop a distinct obligation.
+
+    Two uses of one photograph under attributions that differ anywhere would print
+    differently, so collapsing them would discharge only one of the two duties. This
+    is the half of the de-duplication that a "collapse rows with the same licence"
+    shortcut gets wrong, and it is the half with legal consequences.
+    """
+    lead = PANDAS[1].as_asset(ImageRole.HERO)
+
+    composition = await HtmlComposer().compose(
+        make_brief(), make_content(), (lead, case.variant)
+    )
+    parsed = assert_structurally_valid(composition.html)
+    colophon = parsed.text_in("credits")
+
+    rows = parsed.classed("credit")
+    assert len(rows) == 2, (
+        f"two credits differing only in {case.field} rendered {len(rows)} rows, not 2: "
+        "they print differently, so they are two obligations and both must be stated"
+    )
+    assert case.marker in colophon, (
+        f"{case.marker!r} -- the only thing distinguishing the second credit -- is not "
+        f"in the rendered colophon, so the second row is the first one repeated. "
+        f"Colophon reads {elide(colophon, keep=300)!r}"
+    )
+    for asset in (lead, case.variant):
+        for obligation in _obligations_of(asset.credit):
+            assert obligation in colophon, (
+                f"{obligation!r} is not rendered anywhere in the colophon, so one of "
+                f"the two {case.field}-distinct uses is legally unattributed"
+            )
+
+
+def _obligations_of(credit: ImageCredit) -> tuple[str, ...]:
+    """Every string this credit is obliged to put on the page."""
+    source = credit.source
+    return tuple(
+        part
+        for part in (
+            credit.license,
+            credit.author,
+            credit.license_url,
+            source.url if source else None,
+            source.title if source else None,
+        )
+        if part
+    )
+
+
+async def test_surviving_credit_rows_keep_their_first_appearance_order() -> None:
+    """``dict.fromkeys`` keeps the first occurrence, which is what makes the colophon
+    read in the order the page places the figures rather than in an arbitrary one."""
+    lead, second = PANDAS[0].as_asset(ImageRole.HERO), PANDAS[1].as_asset()
+
+    composition = await HtmlComposer().compose(
+        make_brief(), make_content(), (lead, second, lead)
+    )
+    parsed = assert_structurally_valid(composition.html)
+    colophon = parsed.text_in("credits")
+
+    rows = parsed.classed("credit")
+    assert len(rows) == 2, (
+        f"(A, B, A) rendered {len(rows)} credit rows, expected 2: the repeat of A "
+        "collapses into its first appearance and B survives on its own"
+    )
+    assert colophon.index(PANDAS[0].author) < colophon.index(PANDAS[1].author), (
+        f"the colophon credits {PANDAS[1].author} before {PANDAS[0].author}, but A "
+        "was placed first -- the surviving row is the second occurrence, not the first"
     )
 
 
@@ -2040,3 +2230,946 @@ async def test_display_numbers_are_no_smaller_than_the_prose_they_headline(
             f"headline the page reads smaller than the prose it headlines "
             f"({value.fit} of a {value.cell_px}px {selectors.container} cell)"
         )
+
+
+# --------------------------------------------------------------------------- #
+# 13. Contrast
+# --------------------------------------------------------------------------- #
+# ``core.ports`` requires an image's licence and licence URL to be rendered as
+# *visible text*. The output is a PNG, so a credit that is technically present but
+# illegible discharges nothing -- and until this section there was no contrast
+# assertion anywhere in this repo. The palette itself is clean: 0 violations over
+# 412 text nodes across three bodies and two themes. Exactly one node failed, and
+# it was the one that matters most -- ``figcaption.hero__credit``, the attribution
+# burned over the hero photograph.
+
+RGB = tuple[float, float, float]
+RGBA = tuple[float, float, float, float]
+
+AA_NORMAL: Final = 4.5
+AA_LARGE: Final = 3.0
+LARGE_PX: Final = 24.0
+LARGE_BOLD_PX: Final = 18.66
+BOLD: Final = 700
+"""WCAG 2.x large text: 24px, or 18.66px at weight 700 or more. Spelled out rather
+than flattened to a comment on a bare 4.5, because the split is the rule -- and
+because the colophon's legal text has to land on the strict side of it."""
+
+
+def _linear(channel: float) -> float:
+    """One sRGB channel, 0-255, linearized as WCAG 2.x defines it."""
+    ratio = channel / 255
+    return ratio / 12.92 if ratio <= 0.03928 else ((ratio + 0.055) / 1.055) ** 2.4
+
+
+def _luminance(rgb: RGB) -> float:
+    red, green, blue = (_linear(channel) for channel in rgb)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _ratio(one: RGB, other: RGB) -> float:
+    low, high = sorted((_luminance(one), _luminance(other)))
+    return (high + 0.05) / (low + 0.05)
+
+
+def _over(front: RGBA, back: RGB) -> RGB:
+    """Source-over composite in sRGB 0-255, which is what a browser paints."""
+    alpha = front[3]
+    red, green, blue = front[:3]
+    return (
+        red * alpha + back[0] * (1 - alpha),
+        green * alpha + back[1] * (1 - alpha),
+        blue * alpha + back[2] * (1 - alpha),
+    )
+
+
+def _hex(rgb: RGB) -> str:
+    return "#" + "".join(f"{round(channel):02x}" for channel in rgb)
+
+
+TEXT_CONTRAST_JS = """
+() => {
+  const parse = (value) => {
+    const inner = value.match(/rgba?\\(([^)]+)\\)/);
+    if (!inner) return null;
+    const parts = inner[1].split(/[,\\s\\/]+/).filter(Boolean).map(Number);
+    return [parts[0], parts[1], parts[2], parts.length > 3 ? parts[3] : 1];
+  };
+  const layersOf = (el) => {
+    const layers = [];
+    for (let n = el; n; n = n.parentElement) {
+      const colour = parse(getComputedStyle(n).backgroundColor);
+      if (!colour || colour[3] === 0) continue;
+      layers.push(colour);
+      if (colour[3] === 1) break;
+    }
+    return layers;
+  };
+  const photos = Array.from(document.querySelectorAll('img'))
+    .map(img => img.getBoundingClientRect());
+  const overPhoto = (r) => photos.some(
+    b => b.left < r.right && b.right > r.left && b.top < r.bottom && b.bottom > r.top
+  );
+  const measured = [];
+  outer: for (const el of document.querySelectorAll('*')) {
+    const parts = [...el.childNodes].filter(n => n.nodeType === 3 && n.nodeValue.trim());
+    if (parts.length === 0) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0 || el.getClientRects().length === 0) continue;
+    for (let n = el; n; n = n.parentElement) {
+      const s = getComputedStyle(n);
+      if (s.display === 'none' || s.contentVisibility === 'hidden') continue outer;
+      if (s.visibility === 'hidden' || s.visibility === 'collapse') continue outer;
+      if (parseFloat(s.opacity) === 0) continue outer;
+    }
+    const style = getComputedStyle(el);
+    measured.push({
+      tag: el.tagName.toLowerCase(),
+      classes: el.getAttribute('class') || '',
+      fontSizePx: parseFloat(style.fontSize),
+      fontWeight: parseInt(style.fontWeight, 10),
+      colorRGBA: parse(style.color),
+      backgroundLayers: layersOf(el),
+      overlapsImage: overPhoto(rect),
+      text: parts.map(n => n.nodeValue).join(''),
+    });
+  }
+  return measured;
+}
+"""
+"""Raw measurements only: every ratio, every threshold and every verdict is decided
+in Python.
+
+An element is measured when it owns a non-blank text node of its own -- judging by
+``textContent`` would blame ``<body>`` for the whole page -- and when it is really
+painted: a zero-width or zero-height box, an empty ``getClientRects()``, or
+``display:none`` / ``visibility:hidden`` / ``content-visibility:hidden`` /
+``opacity:0`` anywhere up the ancestor chain all take it out. That last part is why
+the loop is labelled: an ancestor's ``display:none`` has to skip the *element*, not
+just the ancestor.
+
+Colours are parsed with a split on ``[,\\s/]+`` rather than on commas. Chromium
+emits ``rgb(r, g, b)`` today and newer builds emit ``rgb(r g b / a)``; a
+comma-only parser turns the second into one enormous channel.
+
+``overlapsImage`` is rect intersection against every ``<img>`` on the page, and
+nothing weaker. "Does an ancestor contain an ``<img>``" over-fires on the dozen
+in-flow ``figcaption``s that sit *below* their photograph, and an ancestor
+``background-color`` walk on its own is exactly how the first version of this fence
+scored the hero credit a clean 15.17:1 against a ``#17150f`` that the photograph
+paints straight over."""
+
+
+@dataclass(frozen=True, slots=True)
+class TextNode:
+    """One element that owns rendered text, as the browser measured it."""
+
+    tag: str
+    classes: tuple[str, ...]
+    font_px: float
+    weight: int
+    color: RGBA
+    background_layers: tuple[RGBA, ...]
+    """Nearest first, opaque base last. Translucent layers above the base are kept
+    so Python can composite them; an empty tuple means nothing opaque was found."""
+    overlaps_image: bool
+    text: str
+
+    @property
+    def name(self) -> str:
+        return f"{self.tag}.{'.'.join(self.classes) or '(no class)'}"
+
+    @property
+    def large(self) -> bool:
+        return self.font_px >= LARGE_PX or (
+            self.font_px >= LARGE_BOLD_PX and self.weight >= BOLD
+        )
+
+    @property
+    def threshold(self) -> float:
+        return AA_LARGE if self.large else AA_NORMAL
+
+    @property
+    def excerpt(self) -> str:
+        return elide(" ".join(self.text.split()))
+
+
+@dataclass(frozen=True, slots=True)
+class Contrast:
+    """One text node scored against the background it is actually painted on."""
+
+    node: TextNode
+    foreground: RGB
+    background: RGB
+    ratio: float
+
+    @property
+    def passes(self) -> bool:
+        return self.ratio >= self.node.threshold
+
+
+def read_text_nodes(rows: Sequence[object]) -> tuple[TextNode, ...]:
+    return tuple(_read_text_node(_fields(row)) for row in rows)
+
+
+def _read_text_node(row: Mapping[str, object]) -> TextNode:
+    return TextNode(
+        tag=_text(row["tag"]),
+        classes=tuple(_text(row["classes"]).split()),
+        font_px=_number(row["fontSizePx"]),
+        weight=int(_number(row["fontWeight"])),
+        color=_rgba(row["colorRGBA"]),
+        background_layers=tuple(
+            _rgba(layer) for layer in _rows(row["backgroundLayers"])
+        ),
+        overlaps_image=_flag(row["overlapsImage"]),
+        text=_text(row["text"]),
+    )
+
+
+def _rgba(value: object) -> RGBA:
+    parts = _rows(value)
+    assert len(parts) == 4, f"expected an r,g,b,a quadruple, measured {value!r}"
+    red, green, blue, alpha = (_number(part) for part in parts)
+    return red, green, blue, alpha
+
+
+def _flag(value: object) -> bool:
+    assert isinstance(value, bool), f"expected a boolean, measured {value!r}"
+    return value
+
+
+def _flatten(layers: Sequence[RGBA]) -> RGB | None:
+    """The layer stack composited down to one opaque colour, or ``None`` if the walk
+    reached ``<html>`` without finding an opaque background.
+
+    Currently unexercised: 0 of the 412 measured nodes carry a translucent layer, so
+    every stack is a single opaque entry. It is implemented anyway, because a future
+    translucent design token would otherwise be scored against the wrong colour
+    rather than caught.
+    """
+    if not layers or layers[-1][3] != 1:
+        return None
+    base: RGB = layers[-1][:3]
+    for layer in reversed(layers[:-1]):
+        base = _over(layer, base)
+    return base
+
+
+def score(node: TextNode) -> Contrast:
+    """One text node's WCAG 2.x ratio, computed here and not in the browser.
+
+    No opaque background anywhere up the chain is a hard failure and never a skip.
+    ``_chrome.css`` sets an opaque background on *both* ``html`` and ``body``, so
+    reaching the root means the chrome contract has broken -- and then nothing on the
+    page has a defined contrast at all, which is not a thing to pass quietly.
+    """
+    background = _flatten(node.background_layers)
+    assert background is not None, (
+        f"{node.name} has no opaque background anywhere between it and <html>, so "
+        "nothing on this page has a defined contrast ratio -- _chrome.css sets an "
+        "opaque background on both html and body, and reaching the root means that "
+        f"chrome contract has broken. Measured layers: {list(node.background_layers)}"
+    )
+    foreground = _over(node.color, background) if node.color[3] < 1 else node.color[:3]
+    return Contrast(
+        node=node,
+        foreground=foreground,
+        background=background,
+        ratio=_ratio(foreground, background),
+    )
+
+
+def scored_nodes(nodes: Sequence[TextNode]) -> tuple[Contrast, ...]:
+    """Every measured node whose background is resolvable by colour alone.
+
+    Text over a photograph is excluded here and allow-listed by the caller: its
+    background is an image, so a colour-only ratio there is not a lenient number but
+    a meaningless one. Test B measures those pixels for real.
+    """
+    return tuple(score(node) for node in nodes if not node.overlaps_image)
+
+
+def contrast_report(failures: Sequence[Contrast]) -> str:
+    """One line per violation. Text is whitespace-collapsed, elided and ``repr``'d --
+    it is untrusted scraped-web-shaped content, and ``repr`` is what stops a hostile
+    string forging extra lines in the report."""
+    return "\n".join(
+        f"{contrast.node.name}  {contrast.node.font_px}px/{contrast.node.weight}  "
+        f"{_hex(contrast.foreground)} on {_hex(contrast.background)}\n"
+        f"  = {contrast.ratio:.2f}:1, needs {contrast.node.threshold}:1 "
+        f"({'large' if contrast.node.large else 'normal'} text)\n"
+        f"  text: {contrast.node.excerpt!r}"
+        for contrast in failures
+    )
+
+
+TEXT_NODE_FLOOR: Final = 50
+"""Measured with the fixture below: 66 nodes on ``stat_grid``, 67 on
+``process_flow``, 73 on ``ranked_list``, identical in both themes. 50 is loose
+enough that dropping a fact or a credit line is not a spurious failure and tight
+enough that a selector matching nothing (0) or only the shared chrome (~20) fails
+immediately."""
+
+TEXT_OVER_PHOTO: Final = frozenset({"figcaption.hero__credit"})
+"""The only text on the page painted over a photograph, and therefore the only node
+a colour-only ratio cannot judge. An allowlist and not a silent skip: a second node
+here is a new piece of text over an image that nothing is measuring."""
+
+COLOPHON_LEGAL_CLASSES: Final = frozenset(
+    {
+        "credit__license",
+        "credit__work",
+        "credit__author",
+        "credit__adapted",
+        "credit__url",
+        "colophon__label",
+    }
+)
+"""The colophon's legally load-bearing text: 10.5-13px at weight 400 throughout, so
+every one of these lands on the strict 4.5 arm of the size split. That is the point
+of implementing the split rather than commenting a flat 4.5 -- a future rule that
+inflated one of these past 24px would otherwise silently relax the attribution to
+3:1."""
+
+
+def contrast_fixture() -> tuple[ResearchContent, tuple[ImageAsset, ...]]:
+    """Seven facts and three *modified* panda photographs, at the default 1200px.
+
+    ``modified=True`` is what makes ``.credit__adapted`` render at all
+    (``layout.py:_credits_of`` -> ``_caption``/the colophon template), and the real
+    ``assets/panda/credits.json`` sets it on all five files. Left at the fixture
+    default, this fence would cover none of the one colophon line that ships on every
+    real page.
+    """
+    images = (
+        PANDAS[0].as_asset(ImageRole.HERO, modified=True),
+        PANDAS[1].as_asset(modified=True),
+        PANDAS[2].as_asset(modified=True),
+    )
+    return make_content(facts=make_facts(7)), images
+
+
+@IN_BOTH_THEMES
+@BODIES
+@BROWSER_LOOP
+async def test_every_visible_text_node_meets_wcag_aa(
+    chromium: Browser, template_id: str, theme: Theme
+) -> None:
+    """Every word a reader has to read out of the PNG clears WCAG 2.x AA.
+
+    ``core.ports`` requires an image's licence and licence URL to be rendered as
+    visible text, and in a PNG "visible" means legible: there is no zoom, no
+    selection and no link to fall back on. The threshold follows the real rule --
+    3:1 for large text, 4.5:1 for everything else -- and the colophon's legal text
+    is asserted to stay on the 4.5 side of it.
+
+    The 3.0 arm rescues nothing today: of 412 measured nodes 94 qualify as large,
+    the lowest large ratio is 4.82, and nothing at all measures inside [3.0, 4.5).
+    It is documentary here, which is exactly why Test C injects a 3.57:1 probe at
+    both sizes -- otherwise the branch is dead code no test would miss.
+    """
+    content, images = contrast_fixture()
+    composition = await compose_cell(template_id, theme, content, images)
+
+    async with laid_out(chromium, composition) as page:
+        measured: list[object] = await page.evaluate(TEXT_CONTRAST_JS)
+
+    nodes = read_text_nodes(measured)
+    assert len(nodes) >= TEXT_NODE_FLOOR, (
+        f"contrast walker measured only {len(nodes)} text nodes on "
+        f"{template_id}/{theme.value}; expected at least {TEXT_NODE_FLOOR}. "
+        "A walker that selects nothing passes vacuously."
+    )
+
+    over_photo = frozenset(node.name for node in nodes if node.overlaps_image)
+    assert over_photo == TEXT_OVER_PHOTO, (
+        f"{template_id}/{theme.value}: the text nodes painted over an <img> are "
+        f"{sorted(over_photo)}, expected {sorted(TEXT_OVER_PHOTO)}. A colour-only "
+        "contrast ratio is meaningless over a photograph -- resolving the ancestor "
+        "backgrounds of the hero credit scored it 15.17:1 while the photograph's own "
+        "pixels measured 2.87:1. Either move this text off the photograph or extend "
+        "the canvas "
+        "readback in test_the_hero_credit_is_legible_over_every_real_hero_photograph "
+        "to cover it; do not add it here."
+    )
+
+    scored = scored_nodes(nodes)
+    failures = [contrast for contrast in scored if not contrast.passes]
+    assert not failures, (
+        f"{len(failures)} of {len(scored)} text nodes on {template_id}/{theme.value} "
+        f"are below WCAG AA:\n{contrast_report(failures)}"
+    )
+
+    adapted = [node for node in nodes if "credit__adapted" in node.classes]
+    assert len(adapted) == 3, (
+        f"{template_id}/{theme.value} rendered {len(adapted)} .credit__adapted lines, "
+        "expected one per displayed photograph (3). At zero the colophon coverage "
+        "above has silently evaporated: that line only renders for a credit whose "
+        "ImageCredit.modified is true, which every entry in the real credits.json is"
+    )
+
+    legal = [
+        contrast
+        for contrast in scored
+        if COLOPHON_LEGAL_CLASSES & set(contrast.node.classes)
+    ]
+    assert legal, (
+        f"{template_id}/{theme.value} measured none of {sorted(COLOPHON_LEGAL_CLASSES)}"
+        ", so the attribution this whole section exists for went unjudged"
+    )
+    relaxed = [contrast.node for contrast in legal if contrast.node.large]
+    assert not relaxed, (
+        "the colophon's legal text now qualifies as WCAG large text and is only held "
+        f"to {AA_LARGE}:1: "
+        + ", ".join(
+            f"{node.name} at {node.font_px}px/{node.weight}" for node in relaxed
+        )
+        + ". Attribution has to be transcribed by hand out of the PNG, so it belongs "
+        f"on the {AA_NORMAL}:1 arm; a display size does not make small print legible."
+    )
+
+
+CONTRAST_PROBE_JS = """
+() => {
+  const probe = (variant, px) => {
+    const el = document.createElement('p');
+    el.className = 'contrast-probe--' + variant;
+    el.textContent = 'Injected ' + variant + ' probe at ' + px + 'px';
+    el.style.color = '#7d7a70';
+    el.style.backgroundColor = '#eceae2';
+    el.style.fontSize = px + 'px';
+    el.style.fontWeight = '400';
+    document.body.appendChild(el);
+  };
+  probe('normal', 13);
+  probe('large', 24);
+}
+"""
+"""Two probes at 3.57:1 -- inside the 3.0-4.5 window -- differing only in size. The
+13px one must be reported and the 24px one must not, which is what proves the size
+split is a rule and not a comment.
+
+Leak-proof by construction: ``laid_out()`` opens its own page and closes it in a
+``finally``, so this injected DOM dies with the page and no parametrized cell can
+ever inherit a probe."""
+
+PROBE_VIOLATION: Final = "p.contrast-probe--normal"
+PROBE_RATIO: Final = 3.57
+
+
+@BROWSER_LOOP
+async def test_the_contrast_walker_reports_an_injected_illegible_node(
+    chromium: Browser,
+) -> None:
+    """The falsifier for Test A, running the same walker and the same scoring.
+
+    A fence that has never been seen to fail is a fence of unknown strength, and
+    this one is measuring a palette that happens to be clean -- 0 violations over
+    412 nodes. So an illegible node is injected and the walker has to name it, and
+    a *legible-at-that-size* twin is injected beside it and the walker has to leave
+    it alone.
+    """
+    content, images = contrast_fixture()
+    composition = await compose_cell("stat_grid", Theme.LIGHT, content, images)
+
+    async with laid_out(chromium, composition) as page:
+        clean = read_text_nodes(await page.evaluate(TEXT_CONTRAST_JS))
+        await page.evaluate(CONTRAST_PROBE_JS)
+        probed = read_text_nodes(await page.evaluate(TEXT_CONTRAST_JS))
+
+    before = [c for c in scored_nodes(clean) if not c.passes]
+    assert not before, (
+        "the page already fails contrast before anything was injected, so this test "
+        f"cannot show that the injection is what the walker caught:\n"
+        f"{contrast_report(before)}"
+    )
+    assert len(probed) == len(clean) + 2, (
+        f"the injection moved the measured node count from {len(clean)} to "
+        f"{len(probed)}, expected +2: the walker is not seeing the probes at all, so "
+        "its silence below would mean nothing"
+    )
+
+    after = [c for c in scored_nodes(probed) if not c.passes]
+    assert len(after) == 1 and {c.node.name for c in after} == {PROBE_VIOLATION}, (
+        f"expected exactly {{{PROBE_VIOLATION!r}}} to be reported, got "
+        f"{sorted(c.node.name for c in after)}. Both probes measure 3.57:1; the 24px "
+        f"one clears the {AA_LARGE}:1 large-text bar and the 13px one does not, so "
+        "reporting both means the size split is not being applied and reporting "
+        "neither means the walker cannot see an illegible node at all.\n"
+        f"{contrast_report(after)}"
+    )
+    assert round(after[0].ratio, 2) == PROBE_RATIO, (
+        f"the injected probe measured {after[0].ratio:.4f}:1, expected "
+        f"{PROBE_RATIO}:1 -- #7d7a70 on #eceae2. A ratio that moved means the "
+        "scoring arithmetic changed, and it is the arithmetic Test A depends on"
+    )
+
+
+# --- the hero credit, measured against the real photograph -------------------
+
+HERO_FILENAMES: Final = (
+    "giant-panda-cub.jpg",
+    "giant-panda-eating-bamboo.jpg",
+    "giant-panda-full-body.jpg",
+    "giant-panda-in-habitat.jpg",
+    "giant-panda-portrait.jpg",
+)
+"""Every hero photograph that ships. ``PANDAS`` covers three of the five and three
+other test modules iterate it, so this fence owns its own tuple rather than growing
+that one."""
+
+
+def _read_panda_credits() -> Mapping[str, Mapping[str, object]]:
+    """``assets/panda/credits.json`` by filename. The data is authoritative -- prose
+    about these licences drifts, and this fence needs the real caption strings at
+    their real lengths, because legibility degrades as a caption wraps."""
+    raw: object = json.loads((PANDA_DIR / "credits.json").read_text(encoding="utf-8"))
+    return MappingProxyType(
+        {_text(_fields(entry)["filename"]): _fields(entry) for entry in _rows(raw)}
+    )
+
+
+PANDA_CREDITS: Final = _read_panda_credits()
+
+
+def real_hero(filename: str) -> ImageAsset:
+    """A hero asset built from ``credits.json``, so the caption the browser lays out
+    is the string the real pipeline produces at the length it produces it."""
+    entry = PANDA_CREDITS[filename]
+    return ImageAsset(
+        content=PANDA_DIR / filename,
+        mime_type=_text(entry["mime_type"]),
+        width_px=int(_number(entry["width"])),
+        height_px=int(_number(entry["height"])),
+        alt_text=_text(entry["alt_text"]),
+        credit=ImageCredit(
+            license=_text(entry["license"]),
+            author=_text(entry["credit"]),
+            license_url=_text(entry["license_url"]),
+            source=Source(url=_text(entry["source_url"]), title=_text(entry["title"])),
+            modified=_flag(entry["modified"]),
+        ),
+        role=ImageRole.HERO,
+    )
+
+
+def test_every_hero_photograph_that_ships_is_covered_by_the_readback() -> None:
+    """A pure constant check, so a new photograph fails here in microseconds rather
+    than by quietly not being measured."""
+    on_disk = {path.name for path in PANDA_DIR.glob("*.jpg")}
+
+    assert set(HERO_FILENAMES) == on_disk, (
+        f"HERO_FILENAMES and assets/panda/*.jpg have diverged: unmeasured "
+        f"{sorted(on_disk - set(HERO_FILENAMES))}, stale "
+        f"{sorted(set(HERO_FILENAMES) - on_disk)}. A new hero photograph has to be "
+        "proven legible under the scrim before it ships -- three of these five were "
+        "illegible under the previous gradient, worst 2.45:1"
+    )
+    assert set(HERO_FILENAMES) <= set(PANDA_CREDITS), (
+        f"no credits.json entry for {sorted(set(HERO_FILENAMES) - set(PANDA_CREDITS))}"
+        ", so the caption measured would not be the caption that ships"
+    )
+
+
+HERO_CREDIT_READBACK_JS = """
+(config) => {
+  const lin = config.linear;
+  const luminance = (rgb) =>
+    0.2126 * lin[Math.round(rgb[0])] +
+    0.7152 * lin[Math.round(rgb[1])] +
+    0.0722 * lin[Math.round(rgb[2])];
+  const ratioTo = (rgb) => {
+    const other = luminance(rgb);
+    const hi = Math.max(other, config.foregroundLuminance);
+    const lo = Math.min(other, config.foregroundLuminance);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const parse = (value) => {
+    const inner = value.match(/rgba?\\(([^)]+)\\)/);
+    if (!inner) return null;
+    const parts = inner[1].split(/[,\\s\\/]+/).filter(Boolean).map(Number);
+    return [parts[0], parts[1], parts[2], parts.length > 3 ? parts[3] : 1];
+  };
+
+  const caption = document.querySelector('.hero__credit');
+  const img = document.querySelector('.hero img');
+  if (!caption) return {error: 'MISSING: .hero__credit'};
+  if (!img) return {error: 'MISSING: .hero img'};
+
+  const style = getComputedStyle(caption);
+  if (!style.font) return {error: 'NO FONT SHORTHAND'};
+  const text = caption.textContent;
+  const captionBox = caption.getBoundingClientRect();
+  const box = img.getBoundingClientRect();
+
+  // The scrim, read off the page rather than assumed: a gradient that was edited
+  // has to change the numbers below, or reverting the fix would still measure clean.
+  const raw = style.backgroundImage;
+  if (!raw.startsWith('linear-gradient(')) return {error: 'NOT A GRADIENT: ' + raw};
+  const pieces = raw.slice(16, raw.lastIndexOf(')')).split(/,(?![^(]*\\))/)
+    .map(piece => piece.trim());
+  let downward = true;
+  if (/^to\\s/.test(pieces[0])) {
+    const direction = pieces.shift();
+    if (direction === 'to top') downward = false;
+    else if (direction !== 'to bottom') return {error: 'UNMODELLED: ' + direction};
+  }
+  if (pieces.length !== 2) return {error: 'UNMODELLED: ' + pieces.length + ' stops'};
+  const height = captionBox.height;
+  const stops = pieces.map((piece, index) => {
+    const colour = parse(piece);
+    const position = piece.slice(piece.lastIndexOf(')') + 1).trim();
+    // A stop written without a position sits at the end of the line it is at:
+    // chromium serialises `rgba(...) 0, rgb(...) 24px` verbatim but drops the
+    // positions of `rgba(...), rgb(...)` entirely.
+    const fraction = position === ''
+      ? index
+      : (position.endsWith('%')
+          ? parseFloat(position) / 100
+          : parseFloat(position) / height);
+    return {rgb: colour.slice(0, 3), alpha: colour[3], at: fraction};
+  });
+  if (stops.some(stop => !Number.isFinite(stop.at) || !Number.isFinite(stop.alpha))) {
+    return {error: 'UNMODELLED STOPS: ' + raw};
+  }
+  const ink = stops[0].rgb;
+  if (stops.some(stop => stop.rgb.some((c, i) => c !== ink[i]))) {
+    return {error: 'TWO-COLOUR SCRIM: ' + raw};
+  }
+  const alphaAt = (pageY) => {
+    const t = downward
+      ? (pageY - captionBox.top) / height
+      : (captionBox.bottom - pageY) / height;
+    if (t <= stops[0].at) return stops[0].alpha;
+    if (t >= stops[1].at) return stops[1].alpha;
+    const span = stops[1].at - stops[0].at;
+    const k = span > 0 ? (t - stops[0].at) / span : 1;
+    return stops[0].alpha + (stops[1].alpha - stops[0].alpha) * k;
+  };
+
+  // The glyph band: the string's ink box on each line it sets, not its line box and
+  // not its padding box.
+  const range = document.createRange();
+  range.selectNodeContents(caption);
+  const lines = Array.from(range.getClientRects());
+  const probe = document.createElement('canvas').getContext('2d');
+  probe.font = style.font;
+  probe.letterSpacing = style.letterSpacing;
+  const metrics = probe.measureText(text);
+
+  // The photograph as painted: object-fit: cover with the default 50% 50% origin.
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(box.width);
+  canvas.height = Math.round(box.height);
+  const ctx = canvas.getContext('2d');
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  if (!nw || !nh) return {error: 'IMAGE NOT DECODED'};
+  const scale = Math.max(canvas.width / nw, canvas.height / nh);
+  const sw = canvas.width / scale, sh = canvas.height / scale;
+  ctx.drawImage(img, (nw - sw) / 2, (nh - sh) / 2, sw, sh,
+                0, 0, canvas.width, canvas.height);
+  let pixels;
+  try {
+    pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  } catch (error) {
+    return {error: 'TAINTED: ' + error.name};
+  }
+
+  let worst = {ratio: Infinity, rgb: null};
+  let darkest = {lum: Infinity, rgb: null};
+  let lightest = {lum: -Infinity, rgb: null};
+  let band = 0, below = 0, ratioSum = 0;
+  let minAlpha = Infinity, maxAlpha = -Infinity;
+  for (const line of lines) {
+    const baseline = line.top + metrics.fontBoundingBoxAscent;
+    const top = baseline - metrics.actualBoundingBoxAscent;
+    const bottom = baseline + metrics.actualBoundingBoxDescent;
+    for (let y = Math.ceil(top); y < bottom; y += 1) {
+      const alpha = alphaAt(y + 0.5);
+      const row = Math.floor(y + 0.5 - box.top);
+      if (row < 0 || row >= canvas.height) continue;
+      minAlpha = Math.min(minAlpha, alpha);
+      maxAlpha = Math.max(maxAlpha, alpha);
+      for (let x = Math.ceil(line.left); x < line.right; x += 1) {
+        const column = Math.floor(x + 0.5 - box.left);
+        if (column < 0 || column >= canvas.width) continue;
+        const at = (row * canvas.width + column) * 4;
+        const out = [
+          pixels[at] * (1 - alpha) + ink[0] * alpha,
+          pixels[at + 1] * (1 - alpha) + ink[1] * alpha,
+          pixels[at + 2] * (1 - alpha) + ink[2] * alpha,
+        ];
+        const ratio = ratioTo(out);
+        const lum = luminance(out);
+        band += 1;
+        ratioSum += ratio;
+        if (ratio < config.threshold) below += 1;
+        if (ratio < worst.ratio) worst = {ratio: ratio, rgb: out};
+        if (lum < darkest.lum) darkest = {lum: lum, rgb: out};
+        if (lum > lightest.lum) lightest = {lum: lum, rgb: out};
+      }
+    }
+  }
+  return {
+    error: null,
+    lines: lines.length,
+    bandPixels: band,
+    belowThreshold: below,
+    meanRatio: band > 0 ? ratioSum / band : 0,
+    minAlpha: band > 0 ? minAlpha : 0,
+    maxAlpha: band > 0 ? maxAlpha : 0,
+    candidates: [worst.rgb, darkest.rgb, lightest.rgb].filter(Boolean),
+    foreground: parse(style.color),
+    scrim: ink,
+    inkAscent: metrics.actualBoundingBoxAscent,
+    inkDescent: metrics.actualBoundingBoxDescent,
+  };
+}
+"""
+"""Numbers out, never image data.
+
+Three candidate pixels come back as plain RGB triples -- the worst ratio, the
+darkest and the lightest -- and Python recomputes the asserted ratio from them with
+its own arithmetic. The browser needs *a* comparison to argmin over 4-7k pixels, so
+it gets the two luminance coefficients and a 256-entry linearization table computed
+in Python: the sRGB curve, which is the part that is easy to get wrong, exists once.
+Returning three candidates rather than one means even a broken argmin cannot hide a
+violation behind a comfortable pixel.
+
+``getImageData`` is wrapped even though ``data:`` URIs do not taint a canvas
+(confirmed over 96 cells), so a future change to how images are inlined surfaces as
+a ``TAINTED:`` failure rather than as a silent skip."""
+
+LINEAR_TABLE: Final = tuple(_linear(channel) for channel in range(256))
+
+
+@dataclass(frozen=True, slots=True)
+class HeroReadback:
+    """What the canvas readback measured over one hero photograph."""
+
+    lines: int
+    band_pixels: int
+    below_threshold: int
+    mean_ratio: float
+    min_alpha: float
+    max_alpha: float
+    candidates: tuple[RGB, ...]
+    foreground: RGBA
+    scrim: RGB
+    ink_ascent: float
+    ink_descent: float
+
+    @property
+    def worst(self) -> float:
+        """The lowest ratio over the whole glyph band, recomputed in Python."""
+        return min(_ratio(self.foreground[:3], rgb) for rgb in self.candidates)
+
+
+def read_hero_readback(measured: Mapping[str, object]) -> HeroReadback:
+    error = measured["error"]
+    assert error is None, f"the hero credit readback could not run: {error!r}"
+    candidates = tuple(_rgb(row) for row in _rows(measured["candidates"]))
+    return HeroReadback(
+        lines=int(_number(measured["lines"])),
+        band_pixels=int(_number(measured["bandPixels"])),
+        below_threshold=int(_number(measured["belowThreshold"])),
+        mean_ratio=_number(measured["meanRatio"]),
+        min_alpha=_number(measured["minAlpha"]),
+        max_alpha=_number(measured["maxAlpha"]),
+        candidates=candidates,
+        foreground=_rgba(measured["foreground"]),
+        scrim=_rgb(measured["scrim"]),
+        ink_ascent=_number(measured["inkAscent"]),
+        ink_descent=_number(measured["inkDescent"]),
+    )
+
+
+def _rgb(value: object) -> RGB:
+    parts = _rows(value)
+    assert len(parts) == 3, f"expected an r,g,b triple, measured {value!r}"
+    red, green, blue = (_number(part) for part in parts)
+    return red, green, blue
+
+
+MIN_BAND_PIXELS: Final = 1000
+"""Measured 4.3k-7.4k glyph-band pixels per cell. The floor matters more than most:
+``min`` over an empty band is infinity, so a band that selected nothing would report
+a perfect score."""
+
+HERO_CREDIT_FOREGROUND: Final[RGB] = (0xEE, 0xEA, 0xDE)
+"""``_chrome.css``'s ``.hero__credit { color: #eeeade }``. Passed into the readback
+only so the browser can argmin over the band; the ratio Python asserts is recomputed
+from the colour the page itself reports."""
+
+
+@pytest.mark.parametrize("filename", HERO_FILENAMES)
+@BROWSER_LOOP
+async def test_the_hero_credit_is_legible_over_every_real_hero_photograph(
+    chromium: Browser, filename: str
+) -> None:
+    """The attribution burned over the hero photograph, measured against the
+    photograph's own pixels.
+
+    This is the only honest measure of text on an image and it is what found the
+    bug. Under the previous scrim -- ``to top``, from 0.78 down to 0 -- the worst
+    pixel over the glyph band read 3.60, 7.88, 2.86, 4.71 and 2.45 across these five
+    photographs at 1200px: three of five illegible, and all five at 640px or under a
+    long Commons title, worst 1.34. It degraded as the caption wrapped, because the
+    ink band sat further up a fade that started at the bottom.
+
+    The shipped scrim ramps *downward* to its 0.78 peak at 24px, which is the
+    caption's own padding-top. The topmost ink pixel sits 27.8px below the box top,
+    so the ramp never reaches a glyph: every line of every caption sits at the flat
+    peak, and wrapping cannot erode it. Measured 9.0-13.6:1 across these five
+    photographs, both themes, all three bodies.
+
+    That the alpha is 0.78 rather than 1.0 is deliberate and is what keeps this test
+    honest. Compositing ``#eeeade`` over ``alpha x rgb(8,7,4) + (1-alpha) x white``
+    -- the worst photograph that can exist -- clears AA at any alpha >= 0.61, so
+    0.78 is guaranteed 8.95:1 against *any* hero and still clears AAA. An opaque
+    scrim would instead make this measurement the constant 16.748:1 with zero
+    variance, which cannot fail on a contrast regression at all -- only on a
+    geometry one. At 0.78 the number moves with the photograph, so it keeps biting.
+
+    Worst pixel, never the mean. The mean measured 5.4-17.0 and read green while
+    0.8-37% of the band was illegible.
+
+    One body is enough. ``.hero__credit`` is declared once in ``_chrome.css`` now and
+    the hero markup is identical in all three bodies; the worst pixel measured
+    identical across all three for all five photographs. Paying 3x for the same
+    pixels buys nothing, so the de-duplication itself is fenced instead, by
+    ``test_the_hero_scrim_is_declared_once_in_the_chrome``.
+    """
+    content = make_content(facts=make_facts(7))
+    config = {
+        "linear": list(LINEAR_TABLE),
+        "foregroundLuminance": _luminance(HERO_CREDIT_FOREGROUND),
+        "threshold": AA_NORMAL,
+    }
+    hero = real_hero(filename)
+
+    measured: dict[Theme, HeroReadback] = {}
+    for theme in THEMES:
+        composition = await compose_cell("stat_grid", theme, content, (hero,))
+        async with laid_out(chromium, composition) as page:
+            raw: dict[str, object] = await page.evaluate(
+                HERO_CREDIT_READBACK_JS, config
+            )
+        measured[theme] = read_hero_readback(raw)
+
+    for theme, readback in measured.items():
+        assert readback.band_pixels >= MIN_BAND_PIXELS, (
+            f"{filename} in {theme.value}: the glyph band covers only "
+            f"{readback.band_pixels} pixels over {readback.lines} lines, under the "
+            f"{MIN_BAND_PIXELS} this fence needs. The worst pixel over an empty band "
+            "is infinity, so a band that selected nothing scores perfectly"
+        )
+        assert readback.worst >= AA_NORMAL, (
+            f"the hero credit is illegible over {filename} in {theme.value}: worst "
+            f"pixel {readback.worst:.2f}:1 against the {AA_NORMAL}:1 bar, over "
+            f"{readback.band_pixels} glyph-band pixels on {readback.lines} lines "
+            f"({readback.below_threshold} of them, "
+            f"{readback.below_threshold / readback.band_pixels:.1%}, below the bar). "
+            f"Mean {readback.mean_ratio:.2f}:1 -- which is why the mean is not what "
+            f"is asserted. Scrim alpha over the band ran "
+            f"{readback.min_alpha:.3f}-{readback.max_alpha:.3f}; anything at or above "
+            f"0.61 makes {_hex(readback.foreground[:3])} readable over the worst "
+            "photograph that can exist, so an alpha below that is the bug and a "
+            "brighter photograph is not"
+        )
+        assert readback.min_alpha == readback.max_alpha, (
+            f"{filename} in {theme.value}: scrim alpha varies across the glyph band, "
+            f"{readback.min_alpha:.3f}-{readback.max_alpha:.3f}. The ramp is supposed "
+            "to finish before the text starts -- its stop sits at the caption's "
+            "padding-top and the topmost ink is 27.8px below the box top -- so every "
+            "glyph should sit at one flat peak. A varying alpha means the ramp now "
+            "crosses the glyphs, which is exactly the shipped defect this fence was "
+            "written for: the gradient ran to top, spending its peak on the padding "
+            "below the text. Raise the stop to padding-top or lower padding-top to "
+            "meet it; do not compensate by darkening the peak"
+        )
+
+    worst_by_theme = {theme: readback.worst for theme, readback in measured.items()}
+    light, dark = (worst_by_theme[theme] for theme in THEMES)
+    assert light == dark, (
+        f"{filename} measures {light:.3f}:1 in light and {dark:.3f}:1 in dark. The "
+        "scrim and the credit colour are both hardcoded, so the two themes have to "
+        "measure identically -- a themed .hero__credit belongs here, measured, rather "
+        "than halving this fence's coverage silently"
+    )
+
+
+# --- the scrim is declared once ---------------------------------------------
+
+CSS_DIR: Final = TEMPLATE_DIR / "css"
+CHROME_SHEET: Final = "_chrome.css"
+BODY_SHEETS: Final = ("stat_grid.css", "process_flow.css", "ranked_list.css")
+
+_JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
+
+
+def sheet_declarations(name: str) -> str:
+    """One stylesheet with both kinds of comment stripped.
+
+    ``_chrome.css`` names ``.hero img`` in prose explaining why that rule stays
+    per-body, so counting selectors in the raw text counts the explanation too.
+    """
+    source = (CSS_DIR / name).read_text(encoding="utf-8")
+    return _CSS_COMMENT.sub(" ", _JINJA_COMMENT.sub(" ", source))
+
+
+def _selector_count(css: str, selector: str) -> int:
+    return len(re.findall(re.escape(selector) + r"\s*[,{]", css))
+
+
+def test_the_hero_scrim_is_declared_once_in_the_chrome() -> None:
+    """``.hero__credit`` used to be three character-identical blocks, one per body
+    sheet, and the contrast bug was three copies deep. It now lives once in
+    ``_chrome.css``.
+
+    This is the stronger successor to "the three blocks are identical": forking one
+    body's scrim fails here, and the failure names the duplication rather than the
+    symptom. Read as text, the way ``test_chrome_split.py`` reads templates -- a
+    second Jinja ``Environment`` to answer a question about four files would be a
+    worse answer than the question deserves.
+    """
+    in_chrome = _selector_count(sheet_declarations(CHROME_SHEET), ".hero__credit")
+    assert in_chrome == 1, (
+        f"{CHROME_SHEET} declares .hero__credit {in_chrome} times, expected once: it "
+        "is the single scrim every body's hero caption is read against"
+    )
+
+    per_body = {
+        sheet: _selector_count(sheet_declarations(sheet), ".hero__credit")
+        for sheet in BODY_SHEETS
+    }
+    forked = {sheet: count for sheet, count in per_body.items() if count}
+    assert not forked, (
+        f".hero__credit is declared per-body again in {forked}. That duplication is "
+        "the defect: the same illegible scrim shipped three times, and the canvas "
+        "readback only measures one body because the rule is shared. Refine it in "
+        f"{CHROME_SHEET} or extend the readback to every body"
+    )
+
+
+def test_the_hero_crop_stays_per_body() -> None:
+    """``.hero img { object-fit: cover }`` is deliberately three copies: each body
+    crops its hero into its own masthead, and hoisting it would be a different
+    change from hoisting the scrim. Pinned so the de-duplication above does not
+    quietly grow a second victim."""
+    for sheet in BODY_SHEETS:
+        css = sheet_declarations(sheet)
+        assert _selector_count(css, ".hero img") == 1, (
+            f"{sheet} no longer declares its own .hero img rule; the crop is per-body "
+            "on purpose"
+        )
+        assert "object-fit: cover" in css, (
+            f"{sheet} declares .hero img but has stopped cropping with "
+            "object-fit: cover, so the readback's cover reconstruction no longer "
+            "models what the page paints"
+        )
+    assert _selector_count(sheet_declarations(CHROME_SHEET), ".hero img") == 0, (
+        f"{CHROME_SHEET} has taken over .hero img. Hoisting the crop is a separate "
+        "change from hoisting the scrim -- make it deliberately, and update this test"
+    )

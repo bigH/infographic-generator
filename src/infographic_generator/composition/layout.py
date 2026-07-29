@@ -390,11 +390,24 @@ def _credits_of(body: PageBody) -> tuple[Credit, ...]:
     figure the builder dropped as unreadable, or one past the band's capacity --
     so it is neither shown nor credited. A credit with nothing in it is dropped
     too, rather than drawing a ruled row that says nothing.
+
+    Nothing stops the imagery stage handing the same photograph over twice, and
+    two byte-identical ruled rows read as a bug. So the key is the whole
+    :class:`Credit` -- every field the colophon prints -- and two rows collapse
+    only when they would render identically. It is deliberately not the licence
+    string: two photographs under one licence are two obligations the moment
+    their author, work title or source URL differ, and CC BY names the *author*,
+    not the licence. Nor does it ignore ``adapted``, because CC BY-SA's duty to
+    state that a work was modified attaches to the use and not to the file.
+    ``dict.fromkeys`` keeps the first occurrence, which is the order this
+    docstring promises.
     """
     return tuple(
-        figure.credit
-        for figure in _figures_of(body)
-        if _has_attribution(figure.credit)
+        dict.fromkeys(
+            figure.credit
+            for figure in _figures_of(body)
+            if _has_attribution(figure.credit)
+        )
     )
 
 

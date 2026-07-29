@@ -8,18 +8,6 @@
 .hero { position: relative; overflow: hidden; }
 /* The one deliberate crop on the page: the hero fills the masthead's height. */
 .hero img { height: 100%; object-fit: cover; }
-.hero__credit {
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  padding: 24px 16px 9px;
-  background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
-  color: #eeeade;
-  font-family: var(--data);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-align: end;
-}
 
 /* --- lede ----------------------------------------------------------- */
 .lede {

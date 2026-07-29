@@ -1,8 +1,9 @@
 {#-
   Chrome stylesheet: embedded faces, design tokens, reset, the devices every
-  layout borrows, and the masthead frame. Included inside the one ``<style>``
-  element in ``_base.html.j2``, ahead of the body's own sheet, so a body rule can
-  refine a chrome rule without either needing !important.
+  layout borrows, and the masthead frame down to the scrim the hero's credit is
+  read against. Included inside the one ``<style>`` element in ``_base.html.j2``,
+  ahead of the body's own sheet, so a body rule can refine a chrome rule without
+  either needing !important.
 
   autoescape escapes for HTML and *not* for CSS, so nothing researched, scraped or
   user-supplied may be interpolated here. The only values that reach this file are
@@ -155,3 +156,61 @@ li { list-style: none; }
   color: var(--dim-patch);
 }
 .masthead--flat .subtitle { max-width: 60ch; }
+
+/* --- hero credit ---------------------------------------------------- */
+/* `.hero` and `.hero img` stay per-body -- only the scrim is shared here, because
+   the contrast bug it fixes was three identical copies deep.
+
+   This is legally load-bearing text sitting on a photograph, and what was wrong
+   with it was the gradient's *direction*, not its alpha. Running `to top` put the
+   0.78 stop at the bottom of the box -- the 9px of padding below the glyphs -- so
+   the ink band sat at 0.44 alpha and the credit was read against the photograph:
+   2.45:1 on `giant-panda-full-body.jpg`, and 1.34:1 once the caption wrapped.
+
+   Running the ramp downward to its peak at 24px, which is this rule's own
+   padding-top, fixes it: measured in chromium the topmost ink pixel sits 27.8px
+   below the box top on today's captions, so the ramp never touches a glyph. Every
+   glyph sits at the ramp's flat peak, and wrapping cannot erode that because the
+   padding is fixed while further lines grow downward. The margin is thinner than
+   27.8 suggests: the tallest ink in the face's latin repertoire at this size is
+   `g` with a cedilla at 10.56px against 8.18px for today's worst caption, which
+   would put ink top at 25.4px. Still clear of 24px, but by 1.4px, and the string
+   is scraped metadata -- an author named `Åke` is all it takes.
+
+   0.78 is therefore a free aesthetic choice, not a compromise. Compositing
+   #eeeade over `alpha x rgb(8,7,4) + (1-alpha) x white` -- the worst photograph
+   that can exist -- clears AA at any alpha >= 0.61, and 0.78 clears AAA at
+   8.95:1. Measured 9.0-13.6:1 across the five real heroes at both widths and
+   every wrap count. Full opacity would buy contrast nobody can perceive and cost
+   the photograph: it is flat by construction, so the credit reads as a censor bar
+   over a bright hero and the plate's hard lower edge shows as a Mach band. At
+   0.78 the image continues under the credit, and over a bright hero the plate
+   lands on the masthead's own ink, so it dissolves into the panel *better* than
+   an opaque one does (1.06:1 against the panel, versus 1.10:1).
+
+   Three couplings, all silent if broken: the 24px stop must stay >= padding-top;
+   the gradient paints the padding box, which equals the border box only while
+   this rule declares no border; and both stops must share one RGB, or the fade
+   becomes a colour shift.
+
+   `text-wrap: balance` is not decoration. It evens a two-line rag that otherwise
+   leaves a 132px orphan in a 616px box, and it repairs every real case of a
+   licence identifier breaking at its own hyphen -- `CC-` / `BY-SA-4.0`, and the
+   same for `CC-BY-2.0` and `CC0-1.0`, which split at other widths. Measured: 27
+   splitting cells over five heroes x widths 560-1400, all 27 repaired, and 0 of
+   168 fuzzed real-shaped captions split. It is a *preference*, not a guarantee --
+   an adversarial caption can still break inside the token -- so if a split ever
+   reaches the output the fix is markup, not another declaration here. */
+.hero__credit {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  padding: 24px 16px 9px;
+  background: linear-gradient(to bottom, rgba(8, 7, 4, 0) 0, rgba(8, 7, 4, 0.78) 24px);
+  color: #eeeade;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-align: end;
+  text-wrap: balance;
+}
