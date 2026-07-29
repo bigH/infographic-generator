@@ -629,18 +629,35 @@ _KEPT_IN_TEXT: Final[frozenset[str]] = frozenset("\t\n\r")
 """The three controls prose is allowed to keep. They are whitespace, so they collapse
 in HTML rather than hiding anything, and the templates are full of them."""
 
-_ILLEGIBLE_IN_TEXT: Final[frozenset[str]] = frozenset(
-    "\u200b\u202a\u202b\u202c\u202d\u202e\ufeff"
-)
-"""The ``Cf`` characters prose may not keep: ZWSP, the four bidi embeddings and the
-override (U+202A-U+202E), and the BOM.
+_ILLEGIBLE_IN_TEXT: Final[frozenset[str]] = frozenset("\u202a\u202b\u202c\u202d\u202e\ufeff")
+"""The ``Cf`` characters prose may not keep: the four bidi embeddings and the override
+(U+202A-U+202E), and the BOM.
 
 Everything else in ``Cf`` stays. ZWNJ (U+200C) and ZWJ (U+200D) are orthography in
 Persian, Arabic and Indic scripts; LRM (U+200E), RLM (U+200F) and ALM (U+061C) are how
 a mixed-direction run is written correctly; the isolates (U+2066-U+2069) scope a
 direction change without leaking it, which is the *safe* way to do what the embeddings
 do badly. The embeddings and the override are deprecated in Unicode precisely because
-they leak, and no legitimate content contains one."""
+they leak, and no legitimate content contains one.
+
+ZWSP (U+200B) is in that list rather than this one, and it was in this one until a
+render in Khmer said otherwise. Khmer, Thai, Lao and Burmese put no space between
+words: ZWSP *is* the word boundary, and the only line-break opportunity the text
+carries. Replacing it printed a visible U+FFFD at every boundary and took the wrap
+opportunity with it -- measured on a Khmer page, **twenty** replacement characters,
+one per word, in text with nothing wrong with it. That is the failure this module
+exists to prevent, arriving from the other direction.
+
+The test the rest of ``Cf`` passes is whether a character can make the page *lie*: an
+embedding reorders glyphs that are already there, and the override substitutes what a
+run says. ZWSP does neither. It adds no glyph, removes none, and reorders nothing -- at
+worst it offers a break where a reader did not expect one, which is a typographic
+nuisance and not a spoof. It sits with ZWNJ and ZWJ, which are kept for exactly the
+same reason: mangling correct text in a script nobody tested to defend against nothing.
+
+``_legible_url`` still replaces it, and the asymmetry is deliberate. A URL is a
+verification key with no words to separate, so an invisible character inside one is
+always a spoof and never orthography."""
 
 
 def _legible_url(url: str) -> str:

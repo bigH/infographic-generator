@@ -999,9 +999,7 @@ construction and could not catch it changing category. This class is a strict su
 must match on every payload -- and if they ever stop matching, that is a real change to
 what the page shows."""
 
-ILLEGIBLE_IN_TEXT = re.compile(
-    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b\u202a-\u202e\ufeff]"
-)
+ILLEGIBLE_IN_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\ufeff]")
 """What no *text node* on the page may contain: exactly ``layout.py``'s
 ``_legible_text`` class, spelled out. Strictly narrower than ``INVISIBLE_IN_URL``, and
 every exclusion is a character prose may legitimately hold and a URL may not.
@@ -1013,11 +1011,16 @@ scripts. LRM (U+200E), RLM (U+200F), ALM (U+061C): how a mixed-direction run is 
 correctly, and none of them can reorder anything on its own. The bidi isolates
 (U+2066-U+2069): the *safe* way to scope a direction change -- they do not leak, which is
 why Unicode deprecated the embeddings and the override (U+202A-U+202E) that this class
-does forbid. U+200B and U+FEFF are here because they are simply not visible.
+does forbid. ZWSP (U+200B): the word boundary in Khmer, Thai, Lao and Burmese, which
+write no space between words -- see
+:func:`test_a_script_that_wraps_only_on_zwsp_keeps_its_word_boundaries`, and
+``layout.py``'s ``_ILLEGIBLE_IN_TEXT`` for why it is not a spoof. U+FEFF stays forbidden:
+it is a *no-break* space, so no script needs it to wrap.
 
 The gap between the two classes is not unfenced: it is covered by the parse-level fence,
 which holds every URL to ``INVISIBLE_IN_URL``. This one is the page-wide invariant, so it
-has to be the class that is true of a correct Persian sentence."""
+has to be the class that is true of a correct Persian sentence -- and of a correct Khmer
+one."""
 
 BENIGN_URL = "https://example.org/clean"
 """A payload-shaped URL with nothing wrong with it, so the fence below can compare a
@@ -2528,7 +2531,7 @@ ILLEGIBLE_TEXT_JS = """
 (sites) => {
   const ILLEGIBLE = new RegExp(
     '[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F' +
-    '\\u200B\\u202A-\\u202E\\uFEFF]',
+    '\\u202A-\\u202E\\uFEFF]',
     'g'
   );
   const name = el =>
@@ -2687,6 +2690,139 @@ async def test_no_text_node_carries_an_invisible_character(
         "a sanitised string somewhere REPLACEMENT_SITES does not name, and that place is "
         "unfenced"
     )
+
+
+ZWSP: Final = "​"
+"""U+200B ZERO WIDTH SPACE. In Khmer, Thai, Lao and Burmese this *is* the word
+boundary: those scripts write no space between words, so it is both the separator and
+the only line-break opportunity the text carries."""
+
+KHMER_WRAP_WIDTH_PX: Final = 640
+"""The narrowest page the suite exercises, so the Khmer run has to wrap somewhere.
+
+At the 1200px default a five-word sentence fits on one line in every body, and a fence
+that cannot observe a wrap cannot tell a kept boundary from an inert one."""
+
+KHMER_WORDS: Final = (
+    "ខ្លាឃ្មុំផេនដា",
+    "ជាសត្វ",
+    "ដែលរស់នៅ",
+    "ក្នុងប្រទេសចិន",
+    "ហើយស៊ីតែឬស្សី",
+)
+"""Five Khmer words, to be joined on ZWSP the way the script is actually written.
+
+Khmer rather than Thai because chromium ships no Khmer line-breaking dictionary, so
+ZWSP is the *only* thing that can break this run -- which makes the wrap half of the
+claim measurable rather than incidental."""
+
+
+def khmer_content() -> ResearchContent:
+    """Correct Khmer prose in every field a body renders as a sentence."""
+    sentence = ZWSP.join(KHMER_WORDS)
+    return make_content(
+        title="ខ្លាឃ្មុំផេនដា",
+        facts=(
+            Fact(
+                label=sentence,
+                value="១២",
+                unit="គីឡូក្រាម",
+                detail=sentence,
+                source=make_source(title=sentence),
+            ),
+        ),
+        sections=(
+            NarrativeSection(heading="ព័ត៌មាន", body=sentence, sources=(make_source(),)),
+        ),
+    )
+
+
+@BODIES
+@BROWSER_LOOP
+async def test_a_script_that_wraps_only_on_zwsp_keeps_its_word_boundaries(
+    chromium: Browser, template_id: str
+) -> None:
+    """Correct Khmer must not be sanitised into visible damage.
+
+    ``dd70176`` put ZWSP in ``_legible_text``'s forbidden set alongside the deprecated
+    bidi embeddings, on the reasoning that it is "simply not visible". That reasoning
+    holds for a URL and breaks for a sentence. Khmer writes no space between words, so
+    ZWSP is the word boundary -- replacing each one with U+FFFD printed a visible
+    diamond at every boundary *and* destroyed the only wrap opportunity the text had.
+    Measured on a Khmer page before this fence: **20 U+FFFD**, one per word, in content
+    with nothing whatsoever wrong with it.
+
+    The distinction that keeps the rest of the set intact: an embedding reorders glyphs
+    that are already there and the override substitutes what a run says, so both can
+    make the page lie. ZWSP adds no glyph, removes none and reorders nothing. It belongs
+    with ZWNJ and ZWJ, kept since ``dd70176`` for the same reason -- refusing to corrupt
+    correct text in a script nobody tested. ``_legible_url`` still replaces it, because
+    a verification key has no words to separate.
+
+    Two assertions, because either alone is satisfiable by an empty page: the boundaries
+    survive as boundaries, and the run actually wrapped on them.
+    """
+    composition = await compose_cell(
+        template_id, Theme.LIGHT, khmer_content(), width_px=KHMER_WRAP_WIDTH_PX
+    )
+    assert ZWSP in composition.html, (
+        "the composed document carries no ZWSP at all, so it was stripped rather than "
+        "kept and this cell would pass by having nothing to measure"
+    )
+
+    async with laid_out(chromium, composition) as page:
+        measured: dict[str, object] = await page.evaluate(KHMER_TEXT_JS, ZWSP)
+
+    boundaries = int(_number(measured["boundaries"]))
+    replacements = int(_number(measured["replacements"]))
+    wrapped = int(_number(measured["wrapped"]))
+
+    assert boundaries >= len(KHMER_WORDS) - 1, (
+        f"{template_id} lays out {boundaries} ZWSP word boundaries, fewer than the "
+        f"{len(KHMER_WORDS) - 1} a single Khmer sentence carries: the boundaries are "
+        "being removed from the rendered text, which is the other way to break it"
+    )
+    assert replacements == 0, (
+        f"{template_id} prints {replacements} U+FFFD across text that is correct Khmer. "
+        "Every one of them is a visible diamond standing where a word boundary was, in "
+        "prose a reader is meant to read"
+    )
+    assert wrapped >= 1, (
+        f"{template_id} lays out {boundaries} ZWSP boundaries but no element containing "
+        "one wrapped to a second line, so the wrap opportunity is not measurably doing "
+        f"anything at {KHMER_WRAP_WIDTH_PX}px and this cell cannot tell a kept boundary from "
+        "an inert one"
+    )
+
+
+KHMER_TEXT_JS = """
+(zwsp) => {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let boundaries = 0;
+  let replacements = 0;
+  let wrapped = 0;
+  const seen = new Set();
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.nodeValue;
+    const here = text.split(zwsp).length - 1;
+    boundaries += here;
+    replacements += (text.match(/\\uFFFD/g) || []).length;
+    if (here > 0 && !seen.has(node.parentElement)) {
+      seen.add(node.parentElement);
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const rows = new Set();
+      for (const box of range.getClientRects()) rows.add(Math.round(box.top));
+      if (rows.size > 1) wrapped += 1;
+    }
+  }
+  return {boundaries, replacements, wrapped};
+}"""
+"""Counts ZWSP boundaries and U+FFFD over every text node, and how many ZWSP-bearing
+elements laid out on more than one line.
+
+The line count comes from distinct rounded ``top`` values across the node's client
+rects, which is the same technique the RTL fence uses -- one rect per line box."""
 
 
 TRANSFORMED_URL_TEXT_JS = """
