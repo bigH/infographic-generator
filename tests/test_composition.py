@@ -19,13 +19,15 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final
 
 import pytest
 import pytest_asyncio
 
 from infographic_generator.composition import HtmlComposer
-from infographic_generator.composition.layout import font_faces
+from infographic_generator.composition.layout import _MIN_FIT_CQW, font_faces
+from infographic_generator.composition.registry import RENDERABLE_TEMPLATE_IDS
 from infographic_generator.core.encoding import to_data_uri
 from infographic_generator.core.models import (
     Brief,
@@ -591,6 +593,146 @@ async def laid_out(browser: Browser, composition: Composition) -> AsyncIterator[
 
 
 # --------------------------------------------------------------------------- #
+# The matrix every rendered-page fence runs over
+# --------------------------------------------------------------------------- #
+# A promise about the rendered page is a promise about every body that ships, in
+# every theme it ships in. Asserting it on one body leaves the other two free to
+# break it, and a fourth body free to arrive with no coverage at all.
+
+TEMPLATE_IDS: Final = tuple(sorted(RENDERABLE_TEMPLATE_IDS))
+"""Every body a selector may return today. Sorted, because
+``RENDERABLE_TEMPLATE_IDS`` is a ``frozenset`` and iterating it in set order gives
+different test ids on different runs."""
+
+THEMES: Final = (Theme.LIGHT, Theme.DARK)
+
+BODIES = pytest.mark.parametrize("template_id", TEMPLATE_IDS)
+IN_BOTH_THEMES = pytest.mark.parametrize("theme", THEMES, ids=[t.value for t in THEMES])
+"""The theme ids are spelled out rather than inferred, so a ``Theme`` that stops
+being a ``str`` cannot silently turn the cells into ``theme0``/``theme1``."""
+
+
+def test_the_matrix_covers_every_body_and_every_theme() -> None:
+    """Both axes are the whole population, not a sample of it.
+
+    ``TEMPLATE_IDS`` is derived at runtime, so an empty registry would turn all 54
+    browser cells into pytest's ``got empty parameter set`` skips -- green, silent, and
+    measuring nothing. ``THEMES`` is written by hand, so a new ``Theme`` member ships a
+    palette no cell renders.
+    """
+    assert TEMPLATE_IDS, (
+        "no template is renderable, so every parametrized browser fence collapses to "
+        "an empty parameter set and skips instead of failing"
+    )
+    assert set(THEMES) == set(Theme), (
+        f"THEMES covers {[t.value for t in THEMES]} but Theme now has "
+        f"{sorted(t.value for t in Theme)}: "
+        f"{sorted(t.value for t in set(Theme) - set(THEMES))} would render in no cell"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class BodySelectors:
+    """Where a body puts its display number, and the cell that sizes it."""
+
+    value: str
+    """The ``.fitted`` headline figure."""
+    container: str
+    """Its query container -- the element carrying ``container-type: inline-size``,
+    whose width every ``cqw`` in the value's size resolves against."""
+    scale_prefix: str
+    """The ``--size`` rung class prefix the body puts on the value."""
+
+
+BODY_SELECTORS: Final[Mapping[str, BodySelectors]] = MappingProxyType(
+    {
+        "stat_grid": BodySelectors(".row__value", ".row__head", "value--"),
+        "process_flow": BodySelectors(".chip__value", ".chip", "chip--"),
+        "ranked_list": BodySelectors(".rank__value", ".rank__figure", "value--"),
+    }
+)
+"""One body's display-number vocabulary per renderable template.
+
+A table rather than a ``data-`` attribute on the templates: it buys the same
+"impossible to silently measure nothing" property with no diff to shipped HTML. The
+cost is that the table can drift from the markup, which is what the test below and
+the measured element counts, container types and computed sizes in the browser cells
+exist to catch."""
+
+
+def test_every_renderable_template_declares_its_display_number_selectors() -> None:
+    assert set(BODY_SELECTORS) == set(RENDERABLE_TEMPLATE_IDS), (
+        "BODY_SELECTORS and RENDERABLE_TEMPLATE_IDS have diverged: "
+        f"missing {sorted(RENDERABLE_TEMPLATE_IDS - set(BODY_SELECTORS))}, "
+        f"stale {sorted(set(BODY_SELECTORS) - RENDERABLE_TEMPLATE_IDS)}. A new "
+        "renderable template must supply its value and container selectors or every "
+        "browser fence silently measures nothing."
+    )
+    blank = {
+        template_id: selectors
+        for template_id, selectors in BODY_SELECTORS.items()
+        if not (selectors.value and selectors.container and selectors.scale_prefix)
+    }
+    assert not blank, (
+        f"blank selectors in BODY_SELECTORS: {blank}. An empty string is not a "
+        "placeholder -- querySelectorAll raises on it, so the cell dies as a raw "
+        "playwright SyntaxError instead of naming the template that never filled "
+        "its row in."
+    )
+
+
+async def compose_cell(
+    template_id: str,
+    theme: Theme,
+    content: ResearchContent,
+    images: Sequence[ImageAsset] = (),
+    width_px: int = RenderOptions().width_px,
+) -> Composition:
+    """One cell of the matrix: one body, one theme, one page width.
+
+    Both axes reach the page the only way production reaches it -- the body through
+    ``HtmlComposer``'s keyword-only ``template_id``, the theme through the brief's
+    ``RenderOptions``, which the chrome turns into ``<html data-theme>``.
+
+    Naming a ``template_id`` also selects that path's error behaviour: it *skips* an
+    unreadable ``Path`` asset where the bare ``HtmlComposer()`` raises ``OSError``.
+    Every fence here hands over readable fixtures, so the divergence cannot move a
+    measurement -- but ``HtmlComposer(template_id="stat_grid")`` is not the same
+    object as ``HtmlComposer()``.
+    """
+    return await HtmlComposer(template_id=template_id).compose(
+        make_brief(options=RenderOptions(width_px=width_px, theme=theme)),
+        content,
+        images,
+    )
+
+
+# A browser measurement arrives as untyped JSON. These four turn it into the types the
+# assertions are written against, so a shape that changed under us fails here with the
+# offending value rather than three lines later as a confusing comparison.
+
+
+def _number(value: object) -> float:
+    assert isinstance(value, (int, float)), f"expected a number, measured {value!r}"
+    return float(value)
+
+
+def _text(value: object) -> str:
+    assert isinstance(value, str), f"expected text, measured {value!r}"
+    return value
+
+
+def _rows(value: object) -> Sequence[object]:
+    assert isinstance(value, list), f"expected a list, measured {value!r}"
+    return value
+
+
+def _fields(value: object) -> Mapping[str, object]:
+    assert isinstance(value, dict), f"expected an object, measured {value!r}"
+    return value
+
+
+# --------------------------------------------------------------------------- #
 # 1. Self-containment
 # --------------------------------------------------------------------------- #
 
@@ -712,12 +854,27 @@ async def test_hostile_urls_never_reach_a_fetchable_attribute() -> None:
         )
 
 
+VALUE_TEXT_JS = """
+(selector) => Array.from(document.querySelectorAll(selector))
+  .map(el => el.innerText)
+  .join('\\n')
+"""
+"""The rendered text of one body's display numbers. An empty match gives an empty
+string, so an assertion against it cannot pass on a page that rendered none."""
+
+
+@IN_BOTH_THEMES
+@BODIES
 @BROWSER_LOOP
 async def test_payloads_are_inert_text_in_a_real_browser_dom(
-    chromium: Browser,
+    chromium: Browser, template_id: str, theme: Theme
 ) -> None:
+    """Every body renders a different subset of the payload carriers -- one puts a
+    fact's value in a chip, another in a ranked row -- so escaping has to hold in all
+    of them, not just in the one the default composer happens to pick."""
+    selectors = BODY_SELECTORS[template_id]
     content, images = hostile_inputs()
-    composition = await HtmlComposer().compose(make_brief(), content, images)
+    composition = await compose_cell(template_id, theme, content, images)
 
     async with laid_out(chromium, composition) as page:
         scripts: int = await page.evaluate("document.querySelectorAll('script').length")
@@ -728,6 +885,7 @@ async def test_payloads_are_inert_text_in_a_real_browser_dom(
             "document.querySelectorAll('img[src=\"x\"]').length"
         )
         body_text: str = await page.evaluate("document.body.innerText")
+        value_text: str = await page.evaluate(VALUE_TEXT_JS, selectors.value)
 
     assert scripts == 0, "a <script> element made it into the DOM"
     assert on_error == 0, "an element with an onerror handler made it into the DOM"
@@ -735,6 +893,15 @@ async def test_payloads_are_inert_text_in_a_real_browser_dom(
 
     for payload in MARKUP_PAYLOADS:
         assert payload in body_text, f"payload should be visible as text: {payload!r}"
+
+    # The three payloads above all reach `innerText` through shared chrome -- title,
+    # subtitle, summary -- so that loop alone would report the same thing six times.
+    # The hostile fact's value is the one payload carried by a per-body element.
+    assert STYLE_PAYLOAD in value_text, (
+        f"{template_id}: the hostile fact value is not rendered inside "
+        f"{selectors.value!r} (measured {value_text!r}), so this cell only ever "
+        "asserted escaping in the shared chrome that every body inherits"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1151,17 +1318,23 @@ async def test_every_font_is_embedded_as_woff2_and_none_is_fetched() -> None:
 # visible to a parser, and all three shipped.
 
 
+@IN_BOTH_THEMES
+@BODIES
 @BROWSER_LOOP
 async def test_licence_uris_are_rendered_exactly_as_supplied(
-    chromium: Browser,
+    chromium: Browser, template_id: str, theme: Theme
 ) -> None:
     """``.credit__url`` inherited ``text-transform: uppercase`` from
     ``.credit__license``, so every licence URI rendered UPPERCASED -- unusable,
     because a URI in a PNG has to be retyped by hand. The markup was right the
     whole time, which is why only the rendered page can catch it.
     """
+    # Iterating PANDAS holds only while every body displays all of them. At six
+    # assets stat_grid renders four images and four credits -- a hero plus a band
+    # that caps at three -- where the other bodies render six of each. Grow PANDAS
+    # past four and this breaks on stat_grid alone; iterate rendered credits then.
     images = tuple(panda.as_asset() for panda in PANDAS)
-    composition = await HtmlComposer().compose(make_brief(), make_content(), images)
+    composition = await compose_cell(template_id, theme, make_content(), images)
 
     async with laid_out(chromium, composition) as page:
         transformed: list[dict[str, str]] = await page.evaluate(TRANSFORMED_URL_TEXT_JS)
@@ -1228,21 +1401,27 @@ ASPECT_RATIO_JS = """
 """
 
 
+@IN_BOTH_THEMES
+@BODIES
 @BROWSER_LOOP
 async def test_a_declared_aspect_ratio_governs_the_rendered_image(
-    chromium: Browser,
+    chromium: Browser, template_id: str, theme: Theme
 ) -> None:
     """``img { height: 100% }`` used to beat the inline ``aspect-ratio``, so every
     figure in a band came out the height of its tallest sibling: a 3:2 image
     rendered at 0.951 and lost about 37% of itself. The two band images here have
     deliberately different ratios, so no single rendered height can satisfy both.
     """
+    # The explicit dimensions are the whole setup: as_asset() defaults every fixture
+    # to 1600x1066, which declares one ratio for all three and leaves the guard below
+    # nothing to compare. Both shapes also have to stay inside the layout's clamp
+    # band, or the clamp itself collapses them back to a single declared ratio.
     images = (
         PANDAS[0].as_asset(role=ImageRole.HERO),
         PANDAS[1].as_asset(width_px=1600, height_px=1066),
         PANDAS[2].as_asset(width_px=1600, height_px=1600),
     )
-    composition = await HtmlComposer().compose(make_brief(), make_content(), images)
+    composition = await compose_cell(template_id, theme, make_content(), images)
 
     async with laid_out(chromium, composition) as page:
         measured: list[dict[str, float | str]] = await page.evaluate(ASPECT_RATIO_JS)
@@ -1280,9 +1459,11 @@ OVERFLOW_JS = """
   const name = el =>
     el.tagName.toLowerCase() + (el.className ? '.' + el.className : '');
   const offenders = [];
+  let examined = 0;
   for (const el of document.body.querySelectorAll('*')) {
     const box = el.getBoundingClientRect();
     if (box.width === 0 && box.height === 0) continue;
+    examined += 1;
     const parent = el.parentElement;
     if (parent) {
       const bounds = parent.getBoundingClientRect();
@@ -1309,16 +1490,30 @@ OVERFLOW_JS = """
       });
     }
   }
-  return offenders;
+  return {examined, offenders};
 }
 """
+"""``examined`` is every box the walk actually judged. Without it ``not offenders`` is
+green for a page that laid out nothing at all -- a body whose ``{% block body %}``
+guards never match its layout's fields renders as bare chrome and overflows nothing."""
+
+MIN_EXAMINED_BOXES: Final = 40
+"""Measured: 63 boxes in the leanest overflow cell (``process_flow``, no images) and
+116 in the richest. The masthead and bibliography together are 7-10, so a body block
+that matched nothing lands near ten and 40 sits clear of both ends."""
 
 
 @pytest.mark.parametrize("images", [PANDA_SET, ()], ids=["hero", "no-images"])
 @pytest.mark.parametrize("width_px", [1200, 640])
+@IN_BOTH_THEMES
+@BODIES
 @BROWSER_LOOP
 async def test_nothing_overflows_the_box_it_is_laid_out_in(
-    chromium: Browser, width_px: int, images: Sequence[ImageAsset]
+    chromium: Browser,
+    template_id: str,
+    theme: Theme,
+    width_px: int,
+    images: Sequence[ImageAsset],
 ) -> None:
     """A screenshot has no scrollbars: anything outside its parent is either
     clipped away or painted over a neighbour. Band captions used to hang 27-58px
@@ -1329,16 +1524,25 @@ async def test_nothing_overflows_the_box_it_is_laid_out_in(
     axis on its own reaches the code that derives it.
     """
     content = make_content(facts=make_facts(7))
-    composition = await HtmlComposer().compose(
-        make_brief(options=RenderOptions(width_px=width_px)), content, images
+    composition = await compose_cell(
+        template_id, theme, content, images, width_px=width_px
     )
 
     async with laid_out(chromium, composition) as page:
-        offenders: list[dict[str, object]] = await page.evaluate(OVERFLOW_JS)
+        measured: dict[str, object] = await page.evaluate(OVERFLOW_JS)
 
+    examined = int(_number(measured["examined"]))
+    offenders = [_fields(row) for row in _rows(measured["offenders"])]
+
+    assert examined >= MIN_EXAMINED_BOXES, (
+        f"{template_id} at a {width_px}px {theme.value} page with {len(images)} images "
+        f"laid out only {examined} boxes, under the {MIN_EXAMINED_BOXES} this fence "
+        "needs to mean anything: the body block rendered next to nothing, and a page "
+        "with nothing on it overflows nothing"
+    )
     assert not offenders, (
-        f"at a {width_px}px page with {len(images)} images, "
-        "elements overflow their parents:\n"
+        f"in {template_id} at a {width_px}px {theme.value} page with "
+        f"{len(images)} images, elements overflow their parents:\n"
         + "\n".join(
             f"  {row['element']} overflows {row['parent']} "
             f"({row['problem']}) by {row['pixels']}px"
@@ -1369,7 +1573,7 @@ TITLE_LINES_JS = """
 """
 """The title's lines, in order, read one character at a time and grouped on their
 ``top`` to within half a pixel: glyphs of one font on one line share a ``top``
-exactly. ``VALUE_LINES_JS``'s overlap clustering cannot be reused here -- ``.title``
+exactly. ``DISPLAY_NUMBER_JS``'s overlap clustering cannot be reused here -- ``.title``
 sets ``line-height: 0.98``, so consecutive line boxes overlap and every line merges
 into one."""
 
@@ -1439,70 +1643,239 @@ NARROW_FACTS = (
     Fact(label="Cub birth weight", value="3.5", unit="oz", detail="Blind and pink."),
 )
 
-VALUE_LINES_JS = """
-() => Array.from(document.querySelectorAll('.row__value')).map(el => {
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const rects = Array.from(range.getClientRects())
-    .filter(r => r.width > 0.5 && r.height > 0.5);
-  const lines = [];
-  for (const r of rects.slice().sort((a, b) => a.top - b.top)) {
-    const line = lines.find(l => r.top < l.bottom - 1 && r.bottom > l.top + 1);
-    if (line) {
-      line.top = Math.min(line.top, r.top);
-      line.bottom = Math.max(line.bottom, r.bottom);
-    } else {
-      lines.push({top: r.top, bottom: r.bottom});
-    }
-  }
-  const head = el.closest('.row__head');
+
+DISPLAY_NUMBER_JS = """
+(sel) => {
+  const values = Array.from(document.querySelectorAll(sel.value));
+  const housed = values.filter(el => el.closest(sel.container));
   return {
-    text: el.innerText.replace(/\\s+/g, ' ').trim(),
-    lines: lines.length,
-    head_overflow: head ? head.scrollWidth - head.clientWidth : 0,
-    value_overflow: el.scrollWidth - el.clientWidth,
+    value_count: values.length,
+    container_count: document.querySelectorAll(sel.container).length,
+    body_px: parseFloat(getComputedStyle(document.body).fontSize),
+    orphans: values
+      .filter(el => !el.closest(sel.container))
+      .map(el => el.innerText.replace(/\\s+/g, ' ').trim().slice(0, 40)),
+    values: housed.map(el => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rects = Array.from(range.getClientRects())
+        .filter(r => r.width > 0.5 && r.height > 0.5);
+      const lines = [];
+      for (const r of rects.slice().sort((a, b) => a.top - b.top)) {
+        const line = lines.find(l => r.top < l.bottom - 1 && r.bottom > l.top + 1);
+        if (line) {
+          line.top = Math.min(line.top, r.top);
+          line.bottom = Math.max(line.bottom, r.bottom);
+        } else {
+          lines.push({top: r.top, bottom: r.bottom});
+        }
+      }
+      const cell = el.closest(sel.container);
+      return {
+        text: el.innerText.replace(/\\s+/g, ' ').trim(),
+        lines: lines.length,
+        rungs: [...el.classList].filter(c => c.startsWith(sel.scale_prefix)),
+        size: getComputedStyle(el).getPropertyValue('--size').trim(),
+        fit: el.style.getPropertyValue('--fit').trim(),
+        font_px: parseFloat(getComputedStyle(el).fontSize),
+        container_type: getComputedStyle(cell).containerType,
+        cell_overflow: cell.scrollWidth - cell.clientWidth,
+        value_overflow: el.scrollWidth - el.clientWidth,
+      };
+    }),
   };
-})
+}
 """
-"""Lines are counted by clustering the range's client rects on vertical overlap,
-not by counting the rects. A value carries a small-font ``.row__unit`` span, so an
-unwrapped value already yields three rects at two different ``top`` coordinates;
-only overlap tells a second line from a smaller sibling on the same one."""
+"""Both selectors are arguments, so one measurement serves every body.
+
+Three things make "the container was not found" a failure rather than a zero.
+``container_count`` is counted straight off the document, independently of the
+values. Any value without its container as an ancestor comes back in ``orphans`` as
+text, so the failure can name the element. And ``values`` measures only the ones that
+are housed, which is why ``cell`` is never null and there is no ternary reporting a
+comfortable zero for a cell that does not exist.
+
+Lines are counted by clustering the range's client rects on vertical overlap, not by
+counting the rects: a value carries a small-font unit span, so an unwrapped value
+already yields three rects at two different ``top`` coordinates, and only overlap
+tells a second line from a smaller sibling on the same one. That clustering suits
+display numbers and nothing else -- ``.title`` sets ``line-height: 0.98``, where
+consecutive line boxes overlap and every line merges into one.
+
+``size`` is the computed ``--size``, and it is what the assertions read: a class is
+only a proxy for a *matching rule*, and a rung renamed on one side of the split --
+``value--zzz`` in the markup, or ``stat_grid.css``'s selector renamed under it --
+leaves the class present, ``--size`` empty, ``min(var(--size), var(--fit))`` invalid,
+and every figure sitting at body copy. ``rungs`` is kept as the diagnostic that tells
+those two cases apart. ``container_type`` is the cell's own ``container-type``,
+because "an ancestor matched" is not "the query container matched": a real but
+non-query ancestor measures a box three times too wide and reports no overflow.
+``body_px`` is the page's own body-copy size, the only honest thing to measure a
+headline figure against; ``_chrome.css`` says 16.5px today."""
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayNumber:
+    """One rendered display number, and what it did to the cell that sizes it."""
+
+    text: str
+    lines: int
+    rungs: tuple[str, ...]
+    """The ``--size`` rung classes the body put on it, e.g. ``("value--xl",)``."""
+    size: str
+    """What those classes actually computed to, e.g. ``"116px"``. Empty means no rule
+    matched, whatever the classes say."""
+    fit: str
+    """The inline ``--fit`` cap, verbatim, e.g. ``"8.77cqw"``."""
+    font_px: float
+    container_type: str
+    """The cell's computed ``container-type``: ``"inline-size"`` if the value's
+    ``cqw`` units really resolve against it, ``"normal"`` if they do not."""
+    cell_overflow: float
+    value_overflow: float
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayNumberReport:
+    """``DISPLAY_NUMBER_JS``'s measurements for one page."""
+
+    value_count: int
+    container_count: int
+    body_px: float
+    orphans: tuple[str, ...]
+    values: tuple[DisplayNumber, ...]
+    """Only the values that have their container as an ancestor; the rest are in
+    ``orphans``, so this is shorter than ``value_count`` exactly when something is
+    wrong."""
+
+
+def read_display_numbers(report: Mapping[str, object]) -> DisplayNumberReport:
+    """The browser's JSON, checked into types instead of indexed as ``object``."""
+    return DisplayNumberReport(
+        value_count=int(_number(report["value_count"])),
+        container_count=int(_number(report["container_count"])),
+        body_px=_number(report["body_px"]),
+        orphans=tuple(_text(row) for row in _rows(report["orphans"])),
+        values=tuple(
+            _read_display_number(_fields(row)) for row in _rows(report["values"])
+        ),
+    )
+
+
+def _read_display_number(row: Mapping[str, object]) -> DisplayNumber:
+    return DisplayNumber(
+        text=_text(row["text"]),
+        lines=int(_number(row["lines"])),
+        rungs=tuple(_text(rung) for rung in _rows(row["rungs"])),
+        size=_text(row["size"]),
+        fit=_text(row["fit"]),
+        font_px=_number(row["font_px"]),
+        container_type=_text(row["container_type"]),
+        cell_overflow=_number(row["cell_overflow"]),
+        value_overflow=_number(row["value_overflow"]),
+    )
+
+
+AT_FIT_FLOOR: Final = "3.00cqw"
+"""``layout._MIN_FIT_CQW`` exactly as a template spells it, since ``_fit`` formats
+the cap to two decimals.
+
+A value pinned to the floor is one ``layout`` has stopped shrinking on purpose,
+having decided wrapping is the better answer -- so it is outside what the fence
+below can claim. Read off the DOM and compared as a string: recomputing ``_fit()``
+in Python would only re-derive the number under test."""
+
+
+def test_the_no_wrap_envelope_still_names_the_current_fit_floor() -> None:
+    """A pure constant check, so it fails in microseconds and once -- not twelve times
+    behind a browser launch."""
+    assert AT_FIT_FLOOR == f"{_MIN_FIT_CQW:.2f}cqw", (
+        f"layout._MIN_FIT_CQW is now {_MIN_FIT_CQW}, so AT_FIT_FLOOR no longer names "
+        "the floor: the no-wrap fence would stop recognising the values layout has "
+        "already given up on shrinking"
+    )
 
 
 @pytest.mark.parametrize("width_px", [1000, 640])
+@IN_BOTH_THEMES
+@BODIES
 @BROWSER_LOOP
-async def test_ledger_values_stay_on_one_line_inside_their_column(
-    chromium: Browser, width_px: int
+async def test_display_numbers_stay_on_one_line_inside_their_cell(
+    chromium: Browser, template_id: str, theme: Theme, width_px: int
 ) -> None:
-    """The display size of a value is capped by the width of the column it sits in,
-    so narrowing the page shrinks the type instead of wrapping or overflowing it.
+    """The body's headline numbers never wrap, and they shrink to fit their cell
+    rather than overflowing it.
 
-    1000px puts each half-width column at about 410px. 640px is where the cap
-    starts carrying the page on its own: without it ``26-84 lb (12-38 kg)`` sets at
-    76px in a 269px column and breaks across three lines.
+    Every body sizes its display number from the width of the cell it sits in --
+    ``.row__head``, ``.chip``, ``.rank__figure`` -- so narrowing the page shrinks the
+    type instead of breaking it. 1000px puts a ``stat_grid`` half-column at about
+    410px. 640px is where the ``--fit`` cap starts carrying the page on its own:
+    without it ``26-84 lb (12-38 kg)`` sets at 76px in a 269px column and breaks
+    across three lines.
     """
-    composition = await HtmlComposer().compose(
-        make_brief(options=RenderOptions(width_px=width_px)),
-        make_content(facts=NARROW_FACTS),
-        (),
+    selectors = BODY_SELECTORS[template_id]
+    composition = await compose_cell(
+        template_id, theme, make_content(facts=NARROW_FACTS), width_px=width_px
     )
 
     async with laid_out(chromium, composition) as page:
-        values: list[dict[str, object]] = await page.evaluate(VALUE_LINES_JS)
+        measured: dict[str, object] = await page.evaluate(
+            DISPLAY_NUMBER_JS,
+            {
+                "value": selectors.value,
+                "container": selectors.container,
+                "scale_prefix": selectors.scale_prefix,
+            },
+        )
+    report = read_display_numbers(measured)
 
-    assert len(values) == len(NARROW_FACTS), (
-        f"expected {len(NARROW_FACTS)} ledger values, measured {len(values)}"
+    assert report.value_count == len(NARROW_FACTS), (
+        f"{template_id}: {selectors.value!r} matched {report.value_count} elements, "
+        f"expected one per fact ({len(NARROW_FACTS)}) -- at zero this cell measured "
+        "nothing at all"
     )
-    for value in values:
-        assert int(value["head_overflow"]) <= 1, (  # type: ignore[call-overload]
-            f"{value['text']!r} overflows its column by "
-            f"{value['head_overflow']}px at a {width_px}px page"
+    assert report.container_count == report.value_count, (
+        f"{template_id}: {report.value_count} display numbers but "
+        f"{report.container_count} {selectors.container!r} cells -- at zero the "
+        "cell-overflow measurement is a constant zero, and below that count they are "
+        "sharing a cell that sizes none of them individually"
+    )
+    assert not report.orphans, (
+        f"{template_id}: display numbers with no {selectors.container!r} ancestor, so "
+        f"nothing sizes them: {list(report.orphans)}"
+    )
+
+    at_floor = [value.text for value in report.values if value.fit == AT_FIT_FLOOR]
+    assert not at_floor, (
+        f"{template_id} at {width_px}px: {at_floor} sit at the {AT_FIT_FLOOR} fit "
+        "floor, where layout calls wrapping the better answer, so they fall outside "
+        "everything below. Either these fixtures grew past what this fence can claim "
+        "or the floor moved -- fix whichever it was, do not let the loop skip them"
+    )
+
+    for value in report.values:
+        assert value.size, (
+            f"{template_id}: {value.text!r} computes no --size (classes "
+            f"{list(value.rungs)}), so min(var(--size), var(--fit)) is invalid and the "
+            f"figure fell back to body copy at {value.font_px}px against "
+            f"{report.body_px}px prose -- it sits on one line inside its cell while "
+            "reading as prose, passing every assertion below on a broken page"
         )
-        assert int(value["value_overflow"]) <= 1, (  # type: ignore[call-overload]
-            f"{value['text']!r} overflows its own box by {value['value_overflow']}px"
+        assert value.container_type == "inline-size", (
+            f"{template_id}: {selectors.container!r} computes "
+            f"container-type: {value.container_type}, so it is an ordinary ancestor "
+            "rather than the query container the value's cqw units resolve against -- "
+            "the overflow below is measured on the wrong box"
         )
-        assert value["lines"] == 1, (
-            f"{value['text']!r} wrapped onto {value['lines']} lines; a headline "
-            "figure is meant to shrink to fit, not break"
+        assert value.cell_overflow <= 1, (
+            f"{template_id}: {value.text!r} overflows its {selectors.container!r} by "
+            f"{value.cell_overflow}px at a {width_px}px page"
+        )
+        assert value.value_overflow <= 1, (
+            f"{template_id}: {value.text!r} overflows its own box by "
+            f"{value.value_overflow}px"
+        )
+        assert value.lines == 1, (
+            f"{template_id}: {value.text!r} wrapped onto {value.lines} lines at a "
+            f"{width_px}px page; a headline figure is meant to shrink to fit, not break"
         )
