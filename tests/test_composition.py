@@ -72,6 +72,67 @@ above cannot: ``layout.py``'s ``_reference`` titles a source ``source.title or
 _host(source.url)``, and ``_host`` returns an uncapped ``netloc``. An *untitled*
 source therefore writes a 63-character unbroken run into the bibliography."""
 
+# The URL shapes the research harvest can *actually* emit. MARKUP_PAYLOADS above are a
+# synthetic upper bound -- more aggressive than anything ``research/agent.py::_admit``
+# admits -- so they prove escaping holds but say nothing about what a real hostile
+# search result looks like. These are admitted verbatim, because a URL is that zone's
+# byte-exact verification key: it strips Unicode ``Cf`` from a source's title and
+# publisher and structurally cannot strip it from the URL.
+
+BIDI_URL_PAYLOAD = "https://example.com/\u202egpj.exe"
+"""U+202E RIGHT-TO-LEFT OVERRIDE: displays as though the path ends in ``exe.jpg``.
+Not injection -- spoofing, in the field a reader uses to verify the citation."""
+
+ZWSP_HOST_PAYLOAD = "https://exa\u200bmple.com/x"
+"""U+200B inside the *host*, so it reaches the page twice: once in the URL itself and
+again through ``_host``, which is the fallback for a reference title."""
+
+CONTROL_URL_PAYLOAD = "https://example.com/a\nb\rc\td\x00e"
+"""C0 controls. ``urlsplit`` strips these before parsing but the stored string keeps
+them, so ``Source.url.startswith("https://")`` is not a safe assumption either."""
+
+STYLE_IN_URL_PAYLOAD = "https://example.com/</style><style>body{display:none}</style>"
+"""Closes the one inline stylesheet and opens another. ``autoescape=True`` is
+HTML-only, so anything reaching ``<style>`` is unescaped by construction."""
+
+CSS_ESCAPE_URL_PAYLOAD = 'https://example.com/x")%3bbackground:url(http://evil/a'
+"""Breaks out of a CSS string and a ``url()`` and starts a new declaration -- what a
+URL interpolated into ``style=""`` would do. Also the only payload here that would
+make the document fetch from the network."""
+
+RLM_URL_PAYLOAD = "https://example.com/\u200f12/34\u200f/x"
+"""U+200F RIGHT-TO-LEFT MARK, twice, around what looks like a date.
+
+Here because ``_ILLEGIBLE_CATEGORIES`` names U+200E and U+200F and no other payload
+contains either, so narrowing that class to a hand-written list omitting them would
+have kept every fence green. It is *not* in ``ILLEGIBLE_IN_TEXT``: an RLM cannot
+reorder an all-ASCII run at ``direction: ltr`` (verified -- an RLO flips
+``example.com/12.34-56/x`` to ``example.com/x/65-43.21`` while neither mark moves a
+character), so prose may keep it and a URL may not. That difference is the whole
+reason there are two classes."""
+
+HOSTILE_HOST_PAYLOAD = "https://ex\"a')ample<b>.example/x"
+"""Quote, paren and tag characters in the *host*, so they arrive through ``_host`` as
+well as through the URL: an attribute breakout and a markup breakout in one string."""
+
+HARVESTABLE_URL_PAYLOADS = (
+    BIDI_URL_PAYLOAD,
+    ZWSP_HOST_PAYLOAD,
+    CONTROL_URL_PAYLOAD,
+    STYLE_IN_URL_PAYLOAD,
+    CSS_ESCAPE_URL_PAYLOAD,
+    RLM_URL_PAYLOAD,
+    HOSTILE_HOST_PAYLOAD,
+    UNTITLED_SOURCE_URL,
+)
+"""All seven reachable shapes, the length attack above included -- it is a URL payload
+too, and a loop that has to enumerate them should not have to remember it separately."""
+
+UNESCAPED_MARKUP_CHARS = frozenset("<>\"'")
+"""The characters a payload cannot keep verbatim in the document without having
+escaped Jinja2. A payload made only of legal URL characters legitimately survives
+byte-identical, which is why the fence below cannot just forbid every payload string."""
+
 REMOTE_SCHEMES = ("http://", "https://", "//")
 VOID_ELEMENTS = frozenset(
     {
@@ -897,6 +958,201 @@ async def test_hostile_urls_never_reach_a_fetchable_attribute() -> None:
         )
 
 
+REPLACEMENT = "\ufffd"
+"""U+FFFD REPLACEMENT CHARACTER: what the composer prints where an invisible one was.
+
+It is deliberately not a deletion. A citation URL is a verification key, so dropping
+bytes out of its rendered form would produce a URL that was never published and that
+reads as legitimate; U+FFFD says a character was there and does not print."""
+
+INVISIBLE_IN_URL = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e"
+    r"\u2060-\u2064\u2066-\u2069\ufeff]"
+)
+"""The invisible characters spelled out, rather than asked of ``unicodedata``.
+
+An independent oracle: ``layout.py`` decides by Unicode general category, so a test
+that computed the expected string the same way would agree with the implementation by
+construction and could not catch it changing category. This class is a strict subset of
+``Cc`` | ``Cf`` covering every character the payloads above carry, so the two answers
+must match on every payload -- and if they ever stop matching, that is a real change to
+what the page shows."""
+
+ILLEGIBLE_IN_TEXT = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b\u202a-\u202e\ufeff]"
+)
+"""What no *text node* on the page may contain: exactly ``layout.py``'s
+``_legible_text`` class, spelled out. Strictly narrower than ``INVISIBLE_IN_URL``, and
+every exclusion is a character prose may legitimately hold and a URL may not.
+
+``\\t``, ``\\n``, ``\\r``: whitespace, and the templates are pretty-printed, so every
+text node on the page is full of them. Inside a URL they are exactly what ``urlsplit``
+silently drops. ZWNJ (U+200C) and ZWJ (U+200D): orthography in Persian, Arabic and Indic
+scripts. LRM (U+200E), RLM (U+200F), ALM (U+061C): how a mixed-direction run is written
+correctly, and none of them can reorder anything on its own. The bidi isolates
+(U+2066-U+2069): the *safe* way to scope a direction change -- they do not leak, which is
+why Unicode deprecated the embeddings and the override (U+202A-U+202E) that this class
+does forbid. U+200B and U+FEFF are here because they are simply not visible.
+
+The gap between the two classes is not unfenced: it is covered by the parse-level fence,
+which holds every URL to ``INVISIBLE_IN_URL``. This one is the page-wide invariant, so it
+has to be the class that is true of a correct Persian sentence."""
+
+BENIGN_URL = "https://example.org/clean"
+"""A payload-shaped URL with nothing wrong with it, so the fence below can compare a
+hostile document against the same document built from a harmless string."""
+
+
+def displayed_url(url: str) -> str:
+    """What a page has to show for ``url``: no invisible character left standing."""
+    return INVISIBLE_IN_URL.sub(REPLACEMENT, url)
+
+
+def url_payload_inputs(url: str) -> tuple[ResearchContent, tuple[ImageAsset, ...]]:
+    """Content that puts ``url`` in every field the composer renders as a URL.
+
+    Every source is *untitled*, which is what routes the URL through ``_host`` into a
+    reference title and into a fact's attribution as well as into the bibliography and
+    the colophon. Built here rather than by widening ``hostile_inputs()``, whose two
+    shapes of hostile are load-bearing for the fences already written against it.
+    """
+    source = Source(url=url, title=None, publisher=None)
+    content = make_content(
+        facts=(
+            Fact(
+                label="Bamboo intake",
+                value="12",
+                unit="kg",
+                detail="Measured across 40 reserves",
+                source=source,
+            ),
+        ),
+        sections=(
+            NarrativeSection(
+                heading="Diet", body="Bamboo makes up the diet.", sources=(source,)
+            ),
+        ),
+        sources=(source,),
+    )
+    images = (make_asset(credit=make_credit(license_url=url, source=source)),)
+    return content, images
+
+
+def tag_counts(parsed: ParsedHtml) -> Mapping[str, int]:
+    """How many of each element the document has: what a markup breakout changes."""
+    counts: dict[str, int] = {}
+    for tag, _ in parsed.tags:
+        counts[tag] = counts.get(tag, 0) + 1
+    return counts
+
+
+def inline_styles(parsed: ParsedHtml) -> tuple[str, ...]:
+    return tuple(attrs["style"] for _, attrs in parsed.tags if "style" in attrs)
+
+
+MIN_SHOWN_URL_COPIES: Final = 3
+"""Measured: every cell renders the URL exactly three times as visible text -- the
+bibliography's ``span.refs__meta``, the colophon's licence ``span.credit__url`` and its
+source ``span.credit__url``. The floor is the whole measured count rather than a
+fraction of it, because each of the three is a different code path in ``layout.py``
+(``_reference``, ``_credit``'s ``license_url``, ``_credit``'s ``source_url``) and losing
+any one of them means a citation was silently dropped instead of sanitised."""
+
+
+@BODIES
+@pytest.mark.parametrize("url", HARVESTABLE_URL_PAYLOADS)
+async def test_a_harvestable_hostile_url_is_sanitised_inert_and_still_shown(
+    template_id: str, url: str
+) -> None:
+    """The seven URL shapes ``research/agent.py::_admit`` actually admits.
+
+    Four separate promises, because a URL payload can fail in four directions: it must
+    not become markup, must not become a fetch, must not reach CSS -- where
+    ``autoescape=True`` protects nothing at all, since it escapes for HTML only -- and
+    must still be *legible*, because a citation the composer quietly dropped is as
+    useless to a reader as one it corrupted.
+
+    Every assertion carries a measured count. A payload loop that judged nothing is
+    green and worthless, and this zone has shipped that mistake more than once.
+    """
+    content, images = url_payload_inputs(url)
+    composition = await compose_cell(template_id, Theme.LIGHT, content, images)
+    benign = await compose_cell(
+        template_id, Theme.LIGHT, *url_payload_inputs(BENIGN_URL)
+    )
+
+    html = composition.html
+    parsed = assert_structurally_valid(html)
+    shown = displayed_url(url)
+
+    # 1. Nothing raw. A payload of legal URL characters is allowed through unchanged --
+    # it is already inert -- so the fence forbids the *escapable* ones surviving.
+    inert = shown == url and UNESCAPED_MARKUP_CHARS.isdisjoint(url)
+    assert inert or url not in html, (
+        f"{template_id}: {elide(url)!r} appears in the document verbatim, so it was "
+        "neither escaped nor sanitised"
+    )
+    assert tag_counts(parsed) == tag_counts(parse(benign.html)), (
+        f"{template_id}: {elide(url)!r} changed the element census of the page, so it "
+        f"broke out into markup: {tag_counts(parsed)} against "
+        f"{tag_counts(parse(benign.html))}"
+    )
+
+    # 2. No fetch. Every URL a browser would request has to be a data URI.
+    fetchable = parsed.fetchable_urls
+    css_urls = parsed.css_urls
+    for value in (*fetchable, *css_urls):
+        assert value.startswith("data:"), (
+            f"{template_id}: fetchable or CSS URL {elide(value)!r} is not a data URI"
+        )
+        for form in (url, shown):
+            assert form not in value, (
+                f"{template_id}: {elide(form)!r} reached a fetchable attribute or a "
+                f"CSS url(): {elide(value)!r}"
+            )
+    assert fetchable and css_urls, (
+        f"{template_id}: measured {len(fetchable)} fetchable URLs and {len(css_urls)} "
+        "CSS url() values, so the loop above judged nothing -- the embedded image and "
+        "the four @font-face payloads should always be there"
+    )
+
+    # 3. No CSS. autoescape is HTML-only, so a string in <style> or style="" is raw.
+    styles = parsed.tagged("style")
+    assert len(styles) == 1, (
+        f"{template_id}: the document has {len(styles)} <style> elements, not the one "
+        f"inline stylesheet the chrome emits -- {elide(url)!r} opened another"
+    )
+    declarations = inline_styles(parsed)
+    for form in (url, shown):
+        assert form not in parsed.css, (
+            f"{template_id}: {elide(form)!r} reached the inline stylesheet, where "
+            "nothing escapes it"
+        )
+        for declaration in declarations:
+            assert form not in declaration, (
+                f"{template_id}: {elide(form)!r} reached a style=\"\" attribute: "
+                f"{declaration!r}"
+            )
+    assert declarations, (
+        f"{template_id}: measured no style=\"\" attributes at all, so the inline-CSS "
+        "half of this fence judged nothing (the title's --fit is always one)"
+    )
+
+    # 4. Still legible. Sanitising is not an excuse to drop the citation.
+    copies = parsed.text.count(shown)
+    assert copies >= MIN_SHOWN_URL_COPIES, (
+        f"{template_id}: the sanitised URL {elide(shown)!r} appears {copies} times in "
+        f"the rendered text, under the {MIN_SHOWN_URL_COPIES} places that render one "
+        "(bibliography, licence URI, source URI). A citation the page swallowed is no "
+        "more use to a reader than one it corrupted"
+    )
+    survivors = ILLEGIBLE_IN_TEXT.findall(parsed.text)
+    assert not survivors, (
+        f"{template_id}: {len(survivors)} illegible characters survived into the "
+        f"rendered text: {sorted({hex(ord(c)) for c in survivors})}"
+    )
+
+
 VALUE_TEXT_JS = """
 (selector) => Array.from(document.querySelectorAll(selector))
   .map(el => el.innerText)
@@ -1557,6 +1813,15 @@ async def test_licence_uris_are_rendered_exactly_as_supplied(
     silently degrades to ``textContent`` the moment anything above the credits is
     ``display: none``, so "the URI is on the page" has to mean a span with real height
     and no hidden ancestor -- see ``CREDIT_URL_VISIBILITY_JS``.
+
+    "Exactly as supplied" is exact for every URI a licence actually carries, which is
+    what this fence is about, and not quite the whole truth: ``_legible_url`` replaces
+    any control or format character with U+FFFD on the way to the page, so a URI that
+    contains one is rendered faithfully rather than reproduced byte for byte. The six
+    fixture URLs are clean ASCII, so nothing here is transformed. See
+    ``test_no_text_node_carries_an_invisible_character`` for why a URI that *does*
+    carry one must not be reproduced: printing it back unchanged is how a bidi
+    override makes a rendered URL read as a different URL.
     """
     # Iterating PANDAS holds only while every body displays all of them. At six
     # assets stat_grid renders four images and four credits -- a hero plus a band
@@ -1623,6 +1888,282 @@ async def test_licence_uris_are_rendered_exactly_as_supplied(
                 f"{url!r} was rendered uppercased; a licence URI has to be "
                 "transcribable by hand out of the PNG"
             )
+
+
+INVISIBLE_URL_PAYLOADS = (BIDI_URL_PAYLOAD, ZWSP_HOST_PAYLOAD, CONTROL_URL_PAYLOAD)
+"""The three payloads above whose damage is invisible rather than structural. The other
+four announce themselves with a quote or an angle bracket; these read as ordinary URLs
+in the source and as different URLs on the page."""
+
+
+CONTROL_TITLE_PAYLOAD = "Panda\x7fReport\x01Q"
+CONTROL_PUBLISHER_PAYLOAD = "WWF\x02X"
+CONTROL_AUTHOR_PAYLOAD = "Photo\x03grapher"
+CONTROL_LICENSE_PAYLOAD = "CC BY\x04 2.0"
+"""Four fields the URL payloads cannot reach, each carrying a ``Cc`` character that the
+research and imagery zones provably do not remove.
+
+``research/agent.py``'s ``_visible`` drops ``Cf`` only, and ``_clean_title`` is
+``" ".join(_visible(raw).split())`` -- so ``str.split`` takes out the ten whitespace
+controls and the other 55 ``Cc`` characters walk through into a title or a publisher.
+``ImageCredit.author`` and ``ImageCredit.license`` come from the imagery zone and are
+cleaned nowhere at all.
+
+These exist because the first version of the fence below had every source *untitled*, so
+the ``source.title`` branch of ``_reference`` and every credit field were excluded from
+the fixture by construction -- the exact mirror of the older bug where every source had a
+title and so the ``_host`` fallback was never given hostile input. Composed with these
+four, the fence measured 12 offenders on ``process_flow`` and 13 on each of the others,
+in ``figcaption.hero__credit``, the ``*__src`` attributions, ``li``, ``span.refs__meta``,
+``p.credit__license``, ``span.credit__work`` and ``span.credit__author``."""
+
+
+def illegible_url_inputs() -> tuple[ResearchContent, tuple[ImageAsset, ...]]:
+    """Content carrying every invisible-character payload at once, URL and prose alike.
+
+    One cell then covers every door hostile text walks through: the bibliography, a
+    reference title from both branches of ``source.title or _host(source.url)``, a fact's
+    attribution, a section's attribution, the hero caption, both ``span.credit__url`` and
+    all three prose fields of the colophon.
+
+    Two shapes of source, and the pairing is the point. The untitled ones route their URL
+    through ``_host`` into a reference title; the titled one exercises the branch that
+    takes ``source.title`` instead, which no URL payload can reach.
+    """
+    sources = (
+        *(Source(url=url, title=None, publisher=None) for url in INVISIBLE_URL_PAYLOADS),
+        Source(
+            url=BENIGN_URL,
+            title=CONTROL_TITLE_PAYLOAD,
+            publisher=CONTROL_PUBLISHER_PAYLOAD,
+        ),
+    )
+    content = make_content(
+        facts=tuple(
+            Fact(
+                label=f"Bamboo metric {index:02d}",
+                value=f"{index:02d}7.5",
+                unit="kg",
+                detail=None,
+                source=source,
+            )
+            for index, source in enumerate(sources)
+        ),
+        sections=(
+            NarrativeSection(
+                heading="Diet", body="Bamboo makes up the diet.", sources=sources
+            ),
+        ),
+        sources=sources,
+    )
+    images = (
+        make_asset(
+            credit=make_credit(
+                license_text=CONTROL_LICENSE_PAYLOAD,
+                author=CONTROL_AUTHOR_PAYLOAD,
+                license_url=BIDI_URL_PAYLOAD,
+                source=sources[-1],
+            ),
+        ),
+    )
+    return content, images
+
+
+REPLACEMENT_SITES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "bibliography": ".refs",
+        "colophon": ".credits",
+        "attributions": ".row__src, .chip__src, .rank__src, .section__src",
+        "hero caption": ".hero__credit",
+    }
+)
+"""The four places a sanitised string is rendered, as selectors rather than as a
+total, because a total cannot say which one went quiet.
+
+Measured: with the body block excised from the templates the page still renders its
+bibliography and colophon and reports 9 U+FFFD -- so a single floor of 8 passed a
+document with no body at all, and 11 - 2 (losing the colophon) and 10 (losing a fact
+attribution) both cleared it too. Per-site counts reject all three, and the failure
+names the site.
+
+Spelled out per body, like ``BODY_SELECTORS``: the attribution class is
+``.row__src`` in ``stat_grid``, ``.chip__src`` in ``process_flow`` and ``.rank__src``
+in ``ranked_list``, with ``.section__src`` in the two that render sourced sections. A
+body that renames its attribution row shows up here as a zero, which is the point.
+
+The hero caption is here because the total assertion below found it, and that is the
+whole argument for keeping a total beside the per-site counts. ``_caption`` builds it
+from ``Credit.work``, ``Credit.author`` and ``Credit.license`` -- three fields the
+colophon also prints -- but it is emitted in ``{% block masthead_aside %}``, so it
+falls outside both ``.refs`` and ``.credits`` and was rendering four sanitised
+characters per body that no per-site floor was watching. Measured per body:
+bibliography 10, colophon 5, hero caption 4, attributions 4 in ``stat_grid`` and
+``ranked_list`` and 2 in ``process_flow``, which has no sourced sections -- 23, 23 and
+21 in total, exactly what the walk reports."""
+
+ILLEGIBLE_TEXT_JS = """
+(sites) => {
+  const ILLEGIBLE = new RegExp(
+    '[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F' +
+    '\\u200B\\u202A-\\u202E\\uFEFF]',
+    'g'
+  );
+  const name = el =>
+    el ? el.tagName.toLowerCase() + (el.className ? '.' + el.className : '') : '(none)';
+  const entries = Object.entries(sites);
+  const per_site = {};
+  for (const [key] of entries) per_site[key] = 0;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const offenders = [];
+  let nodes = 0;
+  let characters = 0;
+  let replacements = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.nodeValue;
+    nodes += 1;
+    characters += text.length;
+    let here = 0;
+    for (const char of text) {
+      if (char === '\\uFFFD') here += 1;
+    }
+    if (here) {
+      replacements += here;
+      const el = node.parentElement;
+      for (const [key, selector] of entries) {
+        if (el && el.closest(selector)) per_site[key] += here;
+      }
+    }
+    ILLEGIBLE.lastIndex = 0;
+    for (let hit = ILLEGIBLE.exec(text); hit; hit = ILLEGIBLE.exec(text)) {
+      offenders.push({
+        codepoint:
+          'U+' + hit[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0'),
+        element: name(node.parentElement),
+        text: text.trim().slice(0, 60),
+      });
+    }
+  }
+  return {nodes, characters, replacements, per_site, offenders};
+}
+"""
+"""Every text node the page has, judged one node at a time.
+
+Not ``document.body.innerText``: that degrades to ``textContent`` the moment anything
+above is ``display: none``, which is how a page that painted nothing once passed six
+licence assertions here. It also normalises whitespace and drops hidden subtrees, so a
+zero-width character sitting in one would never be counted. A ``TreeWalker`` over
+``SHOW_TEXT`` reads the DOM instead of the layout, so nothing can hide from it -- and
+because it starts at ``document.body`` it never sees the ``<style>`` element's own text.
+
+One character this cannot judge: chromium's parser *deletes* U+0000 out of a text node
+(measured -- ``a\\x00b\\x0bc`` arrives as four characters, the vertical tab kept and the
+NUL gone), so a raw NUL is unreachable here however hostile the fixture. It is the
+parse-level fence above, reading the composed string rather than the DOM, that catches
+that one.
+
+``nodes`` and ``characters`` are what makes ``offenders`` mean something: a page whose
+body failed to render at all has no text nodes and therefore no offenders. ``per_site``
+counts U+FFFD per rendering site, which is the *positive* half of the measurement --
+proof that the hostile strings reached the renderer and were neutralised there, rather
+than vanishing somewhere upstream and leaving a clean page to pass a fence about a dirty
+one. It is attributed by ``closest`` from the text node's own parent, so a count is
+credited to the site the text is actually inside rather than to whatever wraps it."""
+
+MIN_WALKED_TEXT_NODES: Final = 60
+"""Measured: 99 text nodes in the leanest of the three cells (``process_flow``), 110 in
+the richest (``ranked_list``). The floor sits under the leanest because the count is a
+function of how much markup a body emits, which is nobody's contract -- it is here to
+reject zero and to reject a body that collapsed, not to pin a layout."""
+
+MIN_WALKED_CHARACTERS: Final = 500
+"""Measured: 817 characters in the leanest cell, 884 in the richest. Same reasoning as
+the node floor."""
+
+MIN_REPLACEMENTS_PER_SITE: Final = 1
+"""Every site in ``REPLACEMENT_SITES`` has to show at least one U+FFFD.
+
+One rather than a measured floor on purpose. The interesting number here is zero: a site
+that renders no sanitised character either stopped rendering or stopped sanitising, and
+either way the fence has gone quiet about it. A per-site floor tuned to the measurement
+would instead pin how many hostile fields the fixture happens to carry, which is a fact
+about the fixture and not a promise about the page. The totals below cover magnitude."""
+
+
+@BODIES
+@BROWSER_LOOP
+async def test_no_text_node_carries_an_invisible_character(
+    chromium: Browser, template_id: str
+) -> None:
+    """A bidi override in a URL is not an escaping bug, so no parser can see it.
+
+    ``research/agent.py`` cleans ``Cf`` out of a source's title and publisher and
+    cannot clean the URL, which is its verification key -- so the composer's own
+    ``_host`` fallback used to hand the removed characters straight back to the page,
+    and ``https://example.com/`` + U+202E + ``gpj.exe`` rendered as though it ended in
+    ``exe.jpg``. What a reader sees is a property of the laid-out page, which is why
+    this is measured in a browser and stated over text nodes rather than over any one
+    field: it stays true however the research zone changes upstream.
+
+    One axis, not two. Text content does not vary with the theme -- the palette does --
+    so crossing ``IN_BOTH_THEMES`` would double the cells and measure the same string
+    twice.
+    """
+    content, images = illegible_url_inputs()
+    composition = await compose_cell(template_id, Theme.LIGHT, content, images)
+
+    async with laid_out(chromium, composition) as page:
+        measured: dict[str, object] = await page.evaluate(
+            ILLEGIBLE_TEXT_JS, dict(REPLACEMENT_SITES)
+        )
+
+    nodes = int(_number(measured["nodes"]))
+    characters = int(_number(measured["characters"]))
+    replacements = int(_number(measured["replacements"]))
+    per_site = {
+        site: int(_number(count))
+        for site, count in _fields(measured["per_site"]).items()
+    }
+    offenders = [_fields(row) for row in _rows(measured["offenders"])]
+
+    assert nodes >= MIN_WALKED_TEXT_NODES, (
+        f"{template_id} laid out {nodes} text nodes, under the "
+        f"{MIN_WALKED_TEXT_NODES} this fence needs: the walk found almost nothing, so "
+        "it could not have found anything wrong"
+    )
+    assert characters >= MIN_WALKED_CHARACTERS, (
+        f"{template_id} laid out {characters} characters across {nodes} text nodes, "
+        f"under the {MIN_WALKED_CHARACTERS} this fence needs to mean anything"
+    )
+    assert not offenders, (
+        f"{template_id} renders text a reader cannot see and cannot trust:\n"
+        + "\n".join(
+            f"  {row['codepoint']} in {row['element']}: {row['text']!r}"
+            for row in offenders
+        )
+    )
+    # Last, and the ones that fail on a *clean* page: the two floors above prove the
+    # walk happened, and these prove the walk had something to find, in every place
+    # that was supposed to have something.
+    assert set(per_site) == set(REPLACEMENT_SITES), (
+        f"{template_id}: the browser measured sites {sorted(per_site)} but "
+        f"REPLACEMENT_SITES names {sorted(REPLACEMENT_SITES)} -- the two have drifted, "
+        "so an unmeasured site would report nothing rather than fail"
+    )
+    quiet = sorted(
+        site for site, count in per_site.items() if count < MIN_REPLACEMENTS_PER_SITE
+    )
+    assert not quiet, (
+        f"{template_id} shows no U+FFFD in {quiet} (measured {per_site}). Those sites "
+        "either stopped rendering the sanitised string or stopped being handed a hostile "
+        "one, so this fence is passing on a clean document rather than on a neutralised "
+        f"one. Selectors: {[REPLACEMENT_SITES[site] for site in quiet]}"
+    )
+    assert replacements == sum(per_site.values()), (
+        f"{template_id} shows {replacements} U+FFFD in total but only "
+        f"{sum(per_site.values())} inside the three named sites: something is rendering "
+        "a sanitised string somewhere REPLACEMENT_SITES does not name, and that place is "
+        "unfenced"
+    )
 
 
 TRANSFORMED_URL_TEXT_JS = """

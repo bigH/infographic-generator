@@ -20,6 +20,7 @@ actually places, never from the assets it was handed.
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -302,7 +303,11 @@ def build_process_flow_page(
     body = ProcessFlowBody(
         hero=hero,
         steps=tuple(
-            Step(ordinal=index, heading=section.heading, body=section.body)
+            Step(
+                ordinal=index,
+                heading=_legible_text(section.heading),
+                body=_legible_text(section.body),
+            )
             for index, section in enumerate(content.sections, start=1)
         ),
         facts=tuple(
@@ -368,8 +373,8 @@ def build_chrome(brief: Brief, content: ResearchContent, body: PageBody) -> Page
         title=title,
         title_scale=_scale_for(title, (26, 46, 70)),
         title_fit=_fit(_longest_word(title), _TITLE_ADVANCE),
-        subtitle=content.subtitle,
-        summary=content.summary,
+        subtitle=_legible_text(content.subtitle),
+        summary=_legible_text(content.summary),
         references=_references(content),
         credits=_credits_of(body),
         width_px=brief.options.width_px,
@@ -463,7 +468,8 @@ def font_faces() -> tuple[FontFace, ...]:
 
 
 def _page_title(brief: Brief, content: ResearchContent) -> str:
-    return content.title.strip() or brief.prompt.strip() or "Infographic"
+    raw = content.title.strip() or brief.prompt.strip() or "Infographic"
+    return _legible_text(raw)
 
 
 def _bcp47(locale: str) -> str:
@@ -509,6 +515,109 @@ def _longest_word(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Legibility
+# --------------------------------------------------------------------------- #
+# Nothing this package renders may contain a character that occupies no column and
+# reorders or hides the ones around it. Two classes, because a URL and a sentence do
+# not have the same rights: the URL class below is a strict superset of the prose one.
+#
+# ``Zl``/``Zp`` (U+2028/U+2029) are out of scope for both: they render as a visible
+# line break, not as an invisible reordering. Every replacement is one character for
+# one character, so no size this module derives from a string length can move.
+
+_REPLACEMENT: Final = "\ufffd"
+"""U+FFFD REPLACEMENT CHARACTER: category ``So``, so both helpers below are
+idempotent, and visible, so neither of them can hide what it did."""
+
+_ILLEGIBLE_CATEGORIES: Final[frozenset[str]] = frozenset({"Cc", "Cf"})
+"""Every Unicode control and format character, for URLs only. ``Cc`` covers NUL,
+``\\t``, ``\\n``, ``\\r`` and U+007F; ``Cf`` covers U+061C, U+200B-U+200F,
+U+202A-U+202E, U+2060-U+2064, U+2066-U+2069 and U+FEFF."""
+
+_KEPT_IN_TEXT: Final[frozenset[str]] = frozenset("\t\n\r")
+"""The three controls prose is allowed to keep. They are whitespace, so they collapse
+in HTML rather than hiding anything, and the templates are full of them."""
+
+_ILLEGIBLE_IN_TEXT: Final[frozenset[str]] = frozenset(
+    "\u200b\u202a\u202b\u202c\u202d\u202e\ufeff"
+)
+"""The ``Cf`` characters prose may not keep: ZWSP, the four bidi embeddings and the
+override (U+202A-U+202E), and the BOM.
+
+Everything else in ``Cf`` stays. ZWNJ (U+200C) and ZWJ (U+200D) are orthography in
+Persian, Arabic and Indic scripts; LRM (U+200E), RLM (U+200F) and ALM (U+061C) are how
+a mixed-direction run is written correctly; the isolates (U+2066-U+2069) scope a
+direction change without leaking it, which is the *safe* way to do what the embeddings
+do badly. The embeddings and the override are deprecated in Unicode precisely because
+they leak, and no legitimate content contains one."""
+
+
+def _legible_url(url: str) -> str:
+    """A URL with every invisible character replaced by U+FFFD, for display only.
+
+    The research zone strips ``Cf`` from a source's title and publisher but
+    structurally cannot touch its URL: there the URL is a byte-exact verification
+    key, and normalising it would start matching fabricated URLs. So sanitising the
+    *rendered* form -- the only form a reader ever sees -- is this zone's job.
+    Without it ``https://example.com/`` + U+202E + ``gpj.exe`` displays as though it
+    ends in ``exe.jpg``: display spoofing rather than injection, in the one field the
+    citation apparatus exists to make trustworthy, and autoescape has nothing to say
+    about it.
+
+    Replace, do not delete. A citation URL is a verification key, so silently
+    dropping bytes from its rendered form produces a URL that was never published and
+    that reads as perfectly legitimate. U+FFFD keeps the rendering honest -- it says a
+    character was there and does not print -- which is exactly the signal a reader
+    checking a source needs. Deletion would trade a spoof for a quieter spoof.
+
+    Strictly wider than :func:`_legible_text`, and every difference is a character a
+    sentence may legitimately contain and a URL may not: a tab, a newline, a ZWNJ, an
+    LRM, a bidi isolate. There is no such thing as a URL that needs one, so this asks
+    no questions about scripts or direction and replaces the lot.
+    """
+    return "".join(
+        _REPLACEMENT if unicodedata.category(char) in _ILLEGIBLE_CATEGORIES else char
+        for char in url
+    )
+
+
+def _legible_text(text: str) -> str:
+    """Researched or credited prose with every illegible character replaced by U+FFFD.
+
+    Narrower than :func:`_legible_url` at both ends, and both differences are the
+    point. ``\\t``, ``\\n`` and ``\\r`` stay, because they are whitespace in prose and
+    in HTML and the templates are made of them. Most of ``Cf`` stays, because ``Cf``
+    is where correct text keeps its joiners and its direction marks -- see
+    :data:`_ILLEGIBLE_IN_TEXT`. What goes is the rest of ``Cc`` and the deprecated
+    bidi embeddings and override, none of which any real title, publisher, author,
+    licence or sentence contains.
+
+    This exists because the research zone cleans less than its name suggests. Its
+    ``_visible`` drops ``Cf`` only, and ``_clean_title`` is
+    ``" ".join(_visible(raw).split())`` -- so ``str.split`` takes out the whitespace
+    controls and the other 55 ``Cc`` characters walk straight through into a title or
+    a publisher. ``ImageCredit.author`` and ``ImageCredit.license`` come from the
+    imagery zone and are cleaned nowhere at all. Measured: a titled hostile source
+    plus a hostile author and licence put 13 such characters on a rendered page,
+    across the hero caption, the fact and section attributions, the bibliography and
+    both halves of the colophon.
+    """
+    return "".join(map(_shown_in_text, text))
+
+
+def _legible_optional(text: str | None) -> str | None:
+    """The same, for a field the researcher is allowed to omit."""
+    return None if text is None else _legible_text(text)
+
+
+def _shown_in_text(char: str) -> str:
+    if char in _KEPT_IN_TEXT:
+        return char
+    illegible = char in _ILLEGIBLE_IN_TEXT or unicodedata.category(char) == "Cc"
+    return _REPLACEMENT if illegible else char
+
+
+# --------------------------------------------------------------------------- #
 # Ledger
 # --------------------------------------------------------------------------- #
 
@@ -540,10 +649,10 @@ def _block(facts: Sequence[Fact]) -> tuple[Stat, ...]:
 
 def _stat(fact: Fact, *, feature: bool, full_width: bool) -> Stat:
     return Stat(
-        label=fact.label,
-        value=fact.value,
-        unit=fact.unit,
-        detail=fact.detail,
+        label=_legible_text(fact.label),
+        value=_legible_text(fact.value),
+        unit=_legible_optional(fact.unit),
+        detail=_legible_optional(fact.detail),
         attribution=_attribution(fact.source),
         scale=_scale_for(fact.value, (7, 13, 20)),
         fit=_fit(fact.value, _VALUE_ADVANCE, _unit_width(fact.unit)),
@@ -559,10 +668,10 @@ def _unit_width(unit: str | None) -> float:
 def _rank(fact: Fact, *, ordinal: int) -> Rank:
     return Rank(
         ordinal=ordinal,
-        label=fact.label,
-        value=fact.value,
-        unit=fact.unit,
-        detail=fact.detail,
+        label=_legible_text(fact.label),
+        value=_legible_text(fact.value),
+        unit=_legible_optional(fact.unit),
+        detail=_legible_optional(fact.detail),
         attribution=_attribution(fact.source),
         scale=_scale_for(fact.value, (7, 13, 20)),
         fit=_fit(fact.value, _VALUE_ADVANCE, _unit_width(fact.unit)),
@@ -572,15 +681,25 @@ def _rank(fact: Fact, *, ordinal: int) -> Rank:
 def _attribution(source: Source | None) -> str | None:
     if source is None:
         return None
-    return source.publisher or source.title or _host(source.url)
+    return _legible_text(source.publisher or source.title or _host(source.url))
 
 
 def _host(url: str) -> str:
+    """The display host, or the whole URL when there is no host to show.
+
+    Sanitised because it is the fallback for both a reference title and an
+    attribution line: an unsanitised host would undo the cleaning the research zone
+    already did to ``Source.publisher`` and ``Source.title``.
+    """
+    return _legible_url(_netloc(url) or url)
+
+
+def _netloc(url: str) -> str:
+    """Empty when the URL has no host, or is malformed enough that parsing raises."""
     try:
-        netloc = urlsplit(url).netloc
+        return urlsplit(url).netloc.removeprefix("www.")
     except ValueError:
-        return url
-    return netloc.removeprefix("www.") or url
+        return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -590,8 +709,8 @@ def _host(url: str) -> str:
 
 def _section(section: NarrativeSection) -> Section:
     return Section(
-        heading=section.heading,
-        body=section.body,
+        heading=_legible_text(section.heading),
+        body=_legible_text(section.body),
         attributions=tuple(
             attribution
             for attribution in (_attribution(source) for source in section.sources)
@@ -626,9 +745,9 @@ def _unique_by_url(sources: Iterable[Source]) -> tuple[Source, ...]:
 
 def _reference(source: Source) -> Reference:
     return Reference(
-        title=source.title or _host(source.url),
-        publisher=source.publisher,
-        url=source.url,
+        title=_legible_text(source.title or _host(source.url)),
+        publisher=_legible_optional(source.publisher),
+        url=_legible_url(source.url),
     )
 
 
@@ -696,7 +815,7 @@ def _figure(asset: ImageAsset) -> Figure:
     credit = _credit(asset)
     return Figure(
         data_uri=to_data_uri(asset),
-        alt=asset.alt_text,
+        alt=_legible_text(asset.alt_text),
         caption=_caption(credit),
         credit=credit,
         aspect=_aspect(asset.width_px, asset.height_px),
@@ -705,12 +824,13 @@ def _figure(asset: ImageAsset) -> Figure:
 
 def _credit(asset: ImageAsset) -> Credit:
     source = asset.credit.source
+    license_url = asset.credit.license_url
     return Credit(
-        license=asset.credit.license,
-        work=source.title if source else None,
-        author=asset.credit.author,
-        license_url=asset.credit.license_url,
-        source_url=source.url if source else None,
+        license=_legible_text(asset.credit.license),
+        work=_legible_optional(source.title) if source else None,
+        author=_legible_optional(asset.credit.author),
+        license_url=None if license_url is None else _legible_url(license_url),
+        source_url=_legible_url(source.url) if source else None,
         adapted=asset.credit.modified,
     )
 
