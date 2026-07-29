@@ -21,6 +21,7 @@ import struct
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from playwright.async_api import BrowserContext
 from playwright.async_api import Error as PlaywrightError
@@ -29,6 +30,9 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import ViewportSize, async_playwright
 
 from infographic_generator.core.models import Composition, RenderResult
+
+if TYPE_CHECKING:
+    from infographic_generator.core.ports import Renderer
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _IHDR_DIMENSIONS = slice(16, 24)
@@ -190,3 +194,7 @@ def _png_dimensions(payload: bytes) -> tuple[int, int]:
         raise ValueError("payload is not a PNG")
     width_px, height_px = struct.unpack(">II", payload[_IHDR_DIMENSIONS])
     return int(width_px), int(height_px)
+
+
+if TYPE_CHECKING:
+    _conforms: Renderer = PlaywrightRenderer()

@@ -34,7 +34,6 @@ from infographic_generator.core.models import (
     ImageRole,
     ResearchContent,
 )
-from infographic_generator.core.ports import ImageSourcer
 from infographic_generator.imagery import WikimediaImageSourcer, WikimediaSettings
 from infographic_generator.imagery.licensing import (
     normalize_license,
@@ -952,12 +951,6 @@ async def test_alt_text_falls_back_to_the_query_and_filename() -> None:
     (asset,) = await source(commons, ["panda"])
 
     assert asset.alt_text == "panda - Panda one"
-
-
-def test_the_sourcer_satisfies_the_image_sourcer_protocol() -> None:
-    sourcer: ImageSourcer = WikimediaImageSourcer(httpx.AsyncClient())
-
-    assert sourcer is not None
 
 
 def _set_metadata(commons: FakeCommons, key: str, value: str) -> None:

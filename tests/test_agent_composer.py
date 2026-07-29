@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import re
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final, get_args
@@ -63,7 +64,6 @@ from infographic_generator.core.models import (
     ResearchContent,
     Source,
 )
-from infographic_generator.core.ports import Composer
 from tests.test_composition import (
     PANDAS,
     REMOTE_SCHEMES,
@@ -77,6 +77,12 @@ from tests.test_composition import (
 RENDERABLE: Final = tuple(sorted(RENDERABLE_TEMPLATE_IDS))
 BLOCKED: Final = ("timeline", "comparison", "quote_spotlight")
 _URL = re.compile(r"https?://[^\s<>\"')]+")
+
+TEST_TIMEOUT_S: Final = 0.05
+"""Short enough to keep the suite fast, long enough not to fire spuriously."""
+
+TEST_HANG_S: Final = 2.0
+"""An order of magnitude over the deadline: a regression fails, it does not hang."""
 
 
 @pytest.fixture(autouse=True)
@@ -118,18 +124,6 @@ class ExplodingSelector:
     async def select(self, census: ContentCensus) -> TemplateChoice:
         self.calls += 1
         raise self.error
-
-
-class SlowSelector:
-    """Hangs, then times out exactly the way ``asyncio.wait_for`` does."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def select(self, census: ContentCensus) -> TemplateChoice:
-        self.calls += 1
-        await asyncio.wait_for(asyncio.sleep(30), timeout=0.01)
-        raise AssertionError("unreachable: the sleep must time out")
 
 
 class StubMapper:
@@ -202,6 +196,26 @@ class StubClient:
 
     def __init__(self, responses: dict[str, StubResponse]) -> None:
         self.messages = StubMessages(responses)
+
+
+class HangingMessages:
+    """``parse`` never answers, so only the production deadline can end the call."""
+
+    def __init__(self, sleep_s: float) -> None:
+        self.sleep_s = sleep_s
+        self.calls = 0
+
+    async def parse(self, **kwargs: object) -> StubResponse:
+        self.calls += 1
+        await asyncio.sleep(self.sleep_s)
+        raise AssertionError("unreachable: the deadline must cut this call")
+
+
+class HangingClient:
+    """A client whose every call outlives any sane timeout."""
+
+    def __init__(self, sleep_s: float) -> None:
+        self.messages = HangingMessages(sleep_s)
 
 
 # --------------------------------------------------------------------------- #
@@ -393,13 +407,28 @@ async def test_a_raising_selector_degrades_instead_of_propagating(
     assert_structurally_valid(composition.html)
 
 
-async def test_a_hanging_selector_times_out_and_degrades() -> None:
+async def test_the_deadline_cuts_a_hanging_call_and_degrades() -> None:
+    """The timeout is the composer's, not the stub's.
+
+    ``timeout_s`` only reaches a deadline down the ``client`` path -- an injected
+    ``selector`` replaces the call that carries it -- so this drives a client
+    whose ``parse`` hangs for TEST_HANG_S and lets ``_ask``'s ``wait_for`` end
+    both calls. Selection and mapping time out in series, so elapsed is about
+    ``2 * TEST_TIMEOUT_S``: measured 0.11s against a 1.0s bound. Lose the
+    deadline and the two hangs cost 4s, which trips the bound rather than
+    stalling the suite.
+    """
     brief, content = make_brief(), fact_heavy()
-    selector = SlowSelector()
+    client = HangingClient(TEST_HANG_S)
 
-    composition = await AgentComposer(selector=selector).compose(brief, content, ())
+    started = time.monotonic()
+    composition = await AgentComposer(client=client, timeout_s=TEST_TIMEOUT_S).compose(
+        brief, content, ()
+    )
+    elapsed = time.monotonic() - started
 
-    assert selector.calls == 1
+    assert client.messages.calls == 2, "selection and mapping should both be tried"
+    assert elapsed < TEST_HANG_S / 2, f"the deadline never fired: {elapsed:.2f}s"
     assert composition.html == await deterministic_html(
         ruled_id(brief, content, ()), brief, content, ()
     )
@@ -628,7 +657,9 @@ async def test_no_fact_or_source_outside_the_input_reaches_the_page() -> None:
     parsed = parse(composition.html)
     allowed = input_urls(content, images)
 
-    for url in rendered_urls(composition.html):
+    rendered = list(rendered_urls(composition.html))
+    assert rendered, "no URLs on the page (11 today), so the loop below proves nothing"
+    for url in rendered:
         assert url.rstrip(".,") in allowed, f"a URL nobody researched: {url!r}"
     allowed_numbers = _numbers(_input_strings(brief, content, images))
     allowed_numbers |= {str(index) for index in range(len(content.sections) + 1)}
@@ -784,19 +815,28 @@ def test_the_selectable_ids_cannot_drift_from_the_registry() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 9. The port, and the pydantic boundary
+# 9. A mapper that answers nothing, and the pydantic boundary
 # --------------------------------------------------------------------------- #
 
 
-async def test_agent_composer_satisfies_the_composer_port() -> None:
-    composer: Composer = AgentComposer(
+async def test_a_mapper_that_answers_nothing_still_composes() -> None:
+    """Conformance to ``Composer`` is fenced statically, in ``agent_composer``.
+
+    An annotation in a test body is erased at runtime and nothing type-checks
+    ``tests/``, so what is worth asserting here is the behaviour: a trusted
+    selection plus a mapper that hands back no mapping at all still lands on that
+    template's deterministic body.
+    """
+    brief, content = make_brief(), make_content()
+    composer = AgentComposer(
         selector=StubSelector(TemplateChoice("stat_grid", 0.9, "sure")),
         mapper=StubMapper(None),
     )
 
-    composition = await composer.compose(make_brief(), make_content(), ())
+    composition = await composer.compose(brief, content, ())
 
     assert isinstance(composition, Composition)
+    assert composition.html == await deterministic_html("stat_grid", brief, content, ())
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import httpx
 
@@ -41,6 +41,9 @@ from infographic_generator.imagery.prepare import (
     hamming_distance,
     prepare,
 )
+
+if TYPE_CHECKING:
+    from infographic_generator.core.ports import ImageSourcer
 
 _ACCEPTED_MIME_TYPES: Final[frozenset[str]] = frozenset(
     {"image/jpeg", "image/png", "image/webp"}
@@ -411,3 +414,7 @@ def _as_int(value: object, *, default: int) -> int:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return default
+
+
+if TYPE_CHECKING:
+    _conforms: ImageSourcer = WikimediaImageSourcer(httpx.AsyncClient())

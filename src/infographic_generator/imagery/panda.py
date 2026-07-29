@@ -13,7 +13,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from infographic_generator.core.models import (
     Brief,
@@ -23,7 +23,9 @@ from infographic_generator.core.models import (
     ResearchContent,
     Source,
 )
-from infographic_generator.core.ports import ImageSourcer
+
+if TYPE_CHECKING:
+    from infographic_generator.core.ports import ImageSourcer
 
 MAX_DIMENSION_PX: Final[int] = 2000
 MAX_IMAGES: Final[int] = 6
@@ -76,9 +78,6 @@ class PandaImageSourcer:
         entries = _read_credits()
         selected = (_asset(entries, filename, role) for filename, role in _SELECTION)
         return tuple(asset for asset in selected if _fits(asset))[:MAX_IMAGES]
-
-
-_: ImageSourcer = PandaImageSourcer()
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,3 +251,7 @@ def _frame_size(frame: bytes) -> tuple[int, int]:
     if len(frame) < 4:
         raise ValueError("not a JPEG: truncated frame header")
     return int.from_bytes(frame[2:], "big"), int.from_bytes(frame[:2], "big")
+
+
+if TYPE_CHECKING:
+    _conforms: ImageSourcer = PandaImageSourcer()

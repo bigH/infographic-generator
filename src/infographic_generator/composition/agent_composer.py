@@ -38,7 +38,7 @@ import logging
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Final, Literal, Protocol, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeAlias, TypeVar
 
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam, OutputConfigParam
@@ -67,6 +67,9 @@ from infographic_generator.core.models import (
     NarrativeSection,
     ResearchContent,
 )
+
+if TYPE_CHECKING:
+    from infographic_generator.core.ports import Composer
 
 _LOG: Final = logging.getLogger(__name__)
 
@@ -687,3 +690,7 @@ def _maybe_client(
     if selector is not None and mapper is not None:
         return None
     return default_client()
+
+
+if TYPE_CHECKING:
+    _conforms: Composer = AgentComposer()
