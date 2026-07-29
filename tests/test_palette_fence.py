@@ -90,7 +90,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
-from PIL import Image
+from PIL import Image, ImageColor
 
 from infographic_generator.composition import HtmlComposer
 from infographic_generator.composition.composer import TEMPLATE_DIR
@@ -370,20 +370,107 @@ CHROME_CSS: Final = TEMPLATE_DIR / "css" / "_chrome.css"
 LIGHT_SELECTOR: Final = ":root"
 DARK_SELECTOR: Final = ':root[data-theme="dark"]'
 
-_CUSTOM_PROPERTY = re.compile(r"--(?P<name>[a-z0-9-]+)\s*:\s*(?P<value>[^;{}]*)")
-_COLOURISH = re.compile(
-    r"#|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\(", re.IGNORECASE
-)
-"""Any value that names a colour at all, in any notation.
+_COMMENT = re.compile(r"/\*.*?\*/|\{#.*?#\}", re.DOTALL)
 
-Lowercase six-digit hex is the only spelling the rest of this module can read, so
-anything colour-shaped in another notation has to *fail* rather than go unseen. An
-uppercase, three-digit, eight-digit or ``rgb()`` token was measured invisible to the
-narrower regex this replaced -- silently invisible, which for a function whose whole
-job is "is ``TOKENS`` the whole population" is the one unacceptable outcome."""
+
+def _without_comments(css: str) -> str:
+    """The stylesheet with its CSS and Jinja comments replaced by a space.
+
+    ``_colours_in`` and the stray-sheet scan both read the output rather than the
+    file. Prose is not a declaration -- ``/* --paper: #fff was the old value */`` is
+    not a palette entry -- and, more sharply, half of ``_COLOURISH`` is a list of
+    ordinary English words:
+    ``ranked_list.css`` has a comment saying a fence "goes red", and ``_chrome.css``
+    reasons about compositing over "white". Scanning prose for colour keywords would
+    fire on both. A space rather than nothing, so that stripping a comment can never
+    fuse the tokens either side of it into one word."""
+    return _COMMENT.sub(" ", css)
+
+
+_CUSTOM_PROPERTY = re.compile(
+    r"--(?P<name>[A-Za-z0-9_-]+)\s*:\s*(?P<value>(?:\{\{[^{}]*\}\}|[^;{}])*)"
+)
+"""One custom-property declaration: its name, and everything up to the semicolon.
+
+Both halves are wider than they look, and for the same reason -- what this pattern
+does not match, it does not reject, it *does not see*.
+
+**Names are case-sensitive in CSS**, so the class has to be. ``--Warn: #ff0000`` in
+the light block and ``#00ff00`` in the dark one is legal CSS, is a real colour on the
+page, and was measured to leave all 16 non-browser cells of this module green against
+an ``[a-z0-9-]+`` name class. Lowercase is this palette's convention, not the
+parser's; ``_colours_in`` asserts it instead, so a stray capital is a loud style
+failure rather than an invisible token.
+
+**A Jinja interpolation is admitted whole.** ``--w: {{ page.chrome.width_px }}px``
+stops a ``[^;{}]*`` value dead at the first brace and measures as ``''``, which was
+harmless only while an unreadable value was silently skipped. Now that it is a
+failure, the two interpolated lengths in ``:root`` have to arrive as themselves."""
 
 _HEX6 = re.compile(r"\A#[0-9a-f]{6}\Z")
 _HEX_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+
+_COLOUR_FUNCTIONS: Final = (
+    "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch",
+    "color", "color-mix", "light-dark", "device-cmyk",
+)
+_NAMED_COLOURS: Final = frozenset(ImageColor.colormap) | {"currentcolor", "transparent"}
+_COLOURISH = re.compile(
+    "|".join(
+        (
+            _HEX_COLOUR.pattern,
+            r"\b(?:" + "|".join(_COLOUR_FUNCTIONS) + r")\([^;{}]*",
+            r"\b(?:" + "|".join(sorted(_NAMED_COLOURS)) + r")\b",
+        )
+    ),
+    re.IGNORECASE,
+)
+"""Any value that names a colour at all, in any notation -- bare keywords included,
+which this docstring claimed for a while before the pattern did it.
+
+Three arms: hex at every legal digit count in either case, every functional notation
+CSS has, and all 148 colour keywords plus ``transparent`` and ``currentColor``. The
+keyword list is Pillow's ``ImageColor.colormap`` rather than 148 hand-typed strings,
+because a list this module maintained would be a list this module gets wrong; the
+stray-sheet test guards it for the names it depends on, so a Pillow that stopped
+shipping them fails rather than quietly narrows the fence. The functional arm runs on
+to the end of the declaration so that a match reports ``rgb(214, 32, 32)`` and not a
+bare ``rgb(``: this pattern is read by whoever has to go and find the colour.
+
+The omission mattered. ``.step__heading { color: rgb(214, 32, 32); }`` in a body
+sheet -- every heading of that layout hardcoded red -- and ``color: rebeccapurple``
+were both measured to pass the whole suite while this regex sat unused and the sheet
+scan looked for ``#`` alone.
+
+Only ever run over ``_without_comments`` output: the keyword arm matches English."""
+
+_NOT_A_COLOUR = re.compile(
+    r"""\A(?:
+        [0-9.]+ (?: px | rem | em | % | s | ms )?
+      | \{\{ [^{}]* \}\} (?: px | rem | em | % )
+      | "[^"]*" (?: \s*,\s* (?: ui- )? (?: serif | sans-serif | monospace ) )*
+    )\Z""",
+    re.VERBOSE,
+)
+"""The values in ``:root`` that are provably *not* colours, and nothing else.
+
+This is the fail-closed inverse of ``_COLOURISH``, and the direction is the whole
+point. Asking "does this look like a colour?" and skipping whatever says no is a
+parser that fails open: ``--warn: rebeccapurple`` was measured to reach the palette
+with this module green, because for a *new* token the population check cannot fire
+either -- ``declared.keys() == TOKENS.keys()`` stays true when the token was never
+parsed. Asking "is this certainly not a colour?" inverts that: everything else
+reaches ``_HEX6`` and stops the suite.
+
+Derived from what ``:root`` and ``:root[data-theme="dark"]`` declare today, which is
+three shapes and no more -- a length or a bare number (``27px``, ``0.16em``), a
+Jinja-interpolated length (``--w``, ``--pad``), and a quoted family with its generic
+fallbacks (``--display``, ``--body``, ``--data``). A quoted string cannot be a
+colour; the generics are enumerated rather than left as ``[a-z-]+`` so that
+``"Ledger Slab", red`` is not waved through.
+
+A fourth shape arriving is meant to be a red test and a two-line edit here, made by
+someone who has looked at the value. It is not meant to be a skip."""
 
 
 def _root_block(css: str, selector: str) -> str:
@@ -420,18 +507,33 @@ def _root_block(css: str, selector: str) -> str:
 
 
 def _colours_in(block: str, where: str) -> Mapping[str, str]:
-    """Every colour token one ``:root`` block declares, as lowercase six-digit hex."""
+    """Every colour token one ``:root`` block declares, as lowercase six-digit hex.
+
+    Fails closed on anything it cannot classify. Only the shapes ``_NOT_A_COLOUR``
+    proves are not colours are skipped; every other value reaches the ``_HEX6``
+    assertion, so a token spelled ``rebeccapurple``, ``rgb(214, 32, 32)``,
+    ``currentColor`` or ``var(--other)`` stops the suite instead of leaving the
+    palette with a colour nothing in this repo watches.
+    """
     found: dict[str, str] = {}
-    for declaration in _CUSTOM_PROPERTY.finditer(block):
-        value = declaration["value"].strip()
-        if not _COLOURISH.search(value):
+    for declaration in _CUSTOM_PROPERTY.finditer(_without_comments(block)):
+        name, value = declaration["name"], declaration["value"].strip()
+        assert name == name.lower(), (
+            f"{where} declares --{name}, and CSS custom-property names are "
+            f"case-sensitive: --{name} and --{name.lower()} are two different "
+            "properties that read as one token. Every colour in this palette is "
+            "lowercase -- respell it"
+        )
+        if _NOT_A_COLOUR.match(value):
             continue
         assert _HEX6.match(value), (
-            f"{where} declares --{declaration['name']} as {value!r}. This fence reads "
-            "only lowercase six-digit hex, so a token in any other notation would be "
-            "a colour it silently does not watch -- respell it, or teach _HEX6 first"
+            f"{where} declares --{name} as {value!r}, which this fence can neither "
+            "read as a colour nor prove is not one. It reads only lowercase "
+            "six-digit hex, and skipping what it cannot read is how a colour ends up "
+            "unwatched -- respell it as hex, or, if it genuinely is not a colour, "
+            "teach _NOT_A_COLOUR that shape deliberately"
         )
-        found[declaration["name"]] = value
+        found[name] = value
     return found
 
 
@@ -657,13 +759,29 @@ def test_no_other_stylesheet_smuggles_in_a_colour_of_its_own() -> None:
     sheet is included *after* the chrome's, so any of them could declare a token of
     its own or paint a literal colour -- and ``declared_tokens`` only reads
     ``_chrome.css``, so neither would register as part of the palette. Measured: the
-    other four sheets contain **no hex colour at all** today.
+    other four sheets name **no colour at all** today, in any notation.
+
+    In any notation is the assertion, and hex alone was not it. With this scan
+    narrowed to ``#``, ``.step__heading { color: rgb(214, 32, 32); }`` in
+    ``process_flow.css`` turned every heading of that layout hardcoded red with the
+    whole suite green, and ``color: rebeccapurple`` did the same -- while
+    ``_COLOURISH``, which exists for exactly this, sat unused 280 lines above. Both
+    halves of the module now read a colour the same way, so they cannot disagree about
+    what one is.
 
     A body that needs a colour should name a token. If a literal really is right,
     it belongs in the chrome next to the others, where this fence can see it.
     """
+    unnamed = sorted({"red", "rebeccapurple", "white"} - _NAMED_COLOURS)
+    assert not unnamed, (
+        f"{unnamed} are missing from Pillow's colormap, so the keyword arm of "
+        "_COLOURISH is not the CSS colour list this test assumes -- a body sheet "
+        "could paint in whichever names went absent and still read as green"
+    )
     strays = {
-        path.name: _HEX_COLOUR.findall(path.read_text(encoding="utf-8"))
+        path.name: _COLOURISH.findall(
+            _without_comments(path.read_text(encoding="utf-8"))
+        )
         for path in sorted(CHROME_CSS.parent.glob("*.css"))
         if path != CHROME_CSS
     }
