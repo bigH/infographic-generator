@@ -36,7 +36,10 @@ class TemplateSpec:
     image_roles: Sequence[ImageRole] = ()
     """Roles this layout is designed around. Advisory only: it is read in one
     place, ``agent_composer``'s selection prompt, and no builder filters on it --
-    every readable asset is placed whatever role it carries."""
+    every asset handed to a body is placed whatever role it carries. ``fafec26``
+    removed the readability filter that used to qualify that sentence: an asset
+    that cannot be read now raises ``OSError`` out of every body rather than being
+    dropped."""
     blocked_on: str | None = None
     """``None`` means renderable. Otherwise: why it is not, naming the missing
     core field. Never dispatch to a spec with this set."""

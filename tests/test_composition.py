@@ -793,11 +793,15 @@ async def compose_cell(
     ``HtmlComposer``'s keyword-only ``template_id``, the theme through the brief's
     ``RenderOptions``, which the chrome turns into ``<html data-theme>``.
 
-    Naming a ``template_id`` also selects that path's error behaviour: it *skips* an
-    unreadable ``Path`` asset where the bare ``HtmlComposer()`` raises ``OSError``.
-    Every fence here hands over readable fixtures, so the divergence cannot move a
-    measurement -- but ``HtmlComposer(template_id="stat_grid")`` is not the same
-    object as ``HtmlComposer()``.
+    The two paths no longer diverge on error behaviour. They used to: naming a
+    ``template_id`` *skipped* an unreadable ``Path`` asset where the bare
+    ``HtmlComposer()`` raised ``OSError``, and this docstring reassured the next author
+    that the divergence was harmless here because every fence hands over readable
+    fixtures. ``fafec26`` deleted the swallow, so all three bodies now raise, and the
+    reassurance describes a difference that does not exist -- which is worse than a
+    stale note, because it invites someone to rely on a fallback that is gone.
+    ``HtmlComposer(template_id="stat_grid")`` is still not the same object as
+    ``HtmlComposer()``, but the difference is which body it builds and nothing else.
     """
     return await HtmlComposer(template_id=template_id).compose(
         make_brief(options=RenderOptions(width_px=width_px, theme=theme)),
@@ -1311,14 +1315,15 @@ GEOMETRY_SINK_BY_FIELD: Final[Mapping[str, tuple[int, str]]] = MappingProxyType(
 MIN_STYLESHEET_BLOCKS: Final = 60
 """Rule blocks a whole sheet clears, counted by opening brace.
 
-Independently the same floor as ``test_css_injection.MIN_DECLARATION_BLOCKS``, and
-duplicated rather than imported because the import runs the other way: that module
-reads its fixtures from this one, so this one cannot read a constant back out of it.
-TODO: move the constant and its ``declaration_blocks`` helper down here, into the
-shared fixture library, and have ``test_css_injection`` import them.
+``HtmlComposer()`` composes ``stat_grid``, measured at 80 blocks; chrome alone is 44, so
+the floor sits clear of a page that lost its body sheet entirely and well clear of one
+that lost the chrome. It exists so that the fences below, which assert a payload's
+*absence* from the sheet, first establish that there is a whole sheet for it to be absent
+from -- an absence measured in an empty string is free.
 
-``HtmlComposer()`` composes ``stat_grid``, measured at 80 blocks; chrome alone is 44,
-so the floor is clear of a page that lost its body sheet entirely."""
+Kept here rather than shared, because the dependency between the two CSS-context modules
+only runs one way: ``test_css_injection`` imports its fixtures from this file, so this
+file cannot import a constant back out of it."""
 
 
 class HostileStrInt(int):
