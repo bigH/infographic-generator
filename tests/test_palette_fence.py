@@ -594,6 +594,7 @@ def test_every_probe_table_has_rows_to_walk() -> None:
     empty = [
         name
         for name, table in (
+            ("TOKENS", TOKENS),
             ("SAMPLED_PIXELS", SAMPLED_PIXELS),
             ("TOKEN_STYLES", TOKEN_STYLES),
             ("LITERAL_PROBES", LITERAL_PROBES),
