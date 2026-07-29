@@ -20,6 +20,7 @@ from threading import Thread
 from typing import cast
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from infographic_generator.core.models import Composition
 from infographic_generator.render import ExternalRequestError, PlaywrightRenderer
@@ -283,7 +284,7 @@ async def test_a_failure_inside_the_browser_leaves_the_next_render_working(
     composition = Composition(html=TINY_HTML, width_px=320, height_px=200)
     doomed = tmp_path / "doomed.png"
 
-    with pytest.raises(Exception, match="[Tt]imeout"):
+    with pytest.raises(PlaywrightTimeoutError):
         await asyncio.wait_for(
             PlaywrightRenderer(timeout_ms=1).render(composition, doomed), TIMEOUT_S
         )

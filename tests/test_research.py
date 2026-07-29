@@ -60,6 +60,8 @@ async def test_research_returns_a_fully_populated_document() -> None:
 
 async def test_every_fact_and_section_carries_its_own_text() -> None:
     content = await research()
+    assert content.facts, "an empty facts makes the first clause vacuous"
+    assert content.sections, "an empty sections makes the second clause vacuous"
 
     assert all(fact.label and fact.value for fact in content.facts)
     assert all(section.heading and section.body for section in content.sections)
@@ -77,7 +79,7 @@ async def test_max_facts_caps_the_fact_count(max_facts: int | None) -> None:
 
 @pytest.mark.parametrize("max_facts", [-1, -10])
 async def test_negative_max_facts_is_rejected(max_facts: int) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="max_facts cannot be negative"):
         await research(max_facts)
 
 
@@ -125,6 +127,7 @@ async def test_retrieval_timestamps_are_timezone_aware_utc() -> None:
         for source in every_source(await research())
         if source.retrieved_at is not None
     ]
+    assert stamped, "the fixture must fetch something for this to mean anything"
 
     for retrieved_at in stamped:
         assert retrieved_at.tzinfo is not None
@@ -143,6 +146,7 @@ async def test_the_returned_content_is_frozen() -> None:
 
 async def test_sequence_fields_are_tuples() -> None:
     content = await research()
+    assert content.sections, "an empty sections makes the last clause vacuous"
 
     assert isinstance(content.facts, tuple)
     assert isinstance(content.sections, tuple)

@@ -202,6 +202,8 @@ def test_the_lead_asset_is_the_hero(sourced_images: Sequence[ImageAsset]) -> Non
 def test_at_most_one_asset_claims_the_hero_role(
     sourced_images: Sequence[ImageAsset],
 ) -> None:
+    assert sourced_images, "no assets to walk makes the bound below vacuous"
+
     heroes = [
         name
         for name, asset in labelled(sourced_images)
