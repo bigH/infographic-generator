@@ -23,8 +23,20 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+/* `unicode-bidi` and `direction` are a security control, not typography. A URL is
+   an LTR string, and on an RTL page its bidi-neutral trailing characters resolve to
+   the paragraph direction: measured in chromium, `https://.../by/2.0/` renders as
+   `/https://.../by/2.0` -- the solidus relocated to the front. A reference is there
+   to be checked and a licence URI to be retyped, so a URL that reads differently
+   from the one that was published is the whole failure. `isolate` also gives the
+   element its own bidi paragraph, which is what stops an unterminated isolate
+   initiator inside a researched title from re-ordering the URL beside it: the
+   Trojan Source bibliography spoof. `display: block` happens to do that too, so
+   deleting it must not be able to reopen this. */
 .refs__meta {
   display: block;
+  unicode-bidi: isolate;
+  direction: ltr;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.05em;
@@ -65,9 +77,13 @@
 .credit__author { color: var(--dim-patch); }
 .credit__adapted { display: block; color: var(--dim-patch); text-transform: none; letter-spacing: 0.04em; }
 /* text-transform is inherited, and a licence URI has to be transcribed by hand
-   out of the PNG -- uppercasing it would break it. */
+   out of the PNG -- uppercasing it would break it. `unicode-bidi`/`direction` for
+   the same reason and on the same evidence as `.refs__meta` above: this is the
+   element the colophon exists for. */
 .credit__url {
   display: block;
+  unicode-bidi: isolate;
+  direction: ltr;
   font-family: var(--data);
   font-size: 10.5px;
   letter-spacing: 0.03em;

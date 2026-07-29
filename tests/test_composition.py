@@ -2104,6 +2104,125 @@ async def test_html_lang_is_a_language_tag_and_direction_follows_it(
     )
 
 
+VISUAL_ORDER_JS: Final = """(selector) => {
+  const out = [];
+  for (const el of document.querySelectorAll(selector)) {
+    const node = el.firstChild;
+    if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+    const range = document.createRange();
+    const placed = [];
+    const logical = [];
+    for (let i = 0; i < node.length; i++) {
+      const char = node.data[i];
+      if (/\\s/.test(char)) continue;
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const box = range.getBoundingClientRect();
+      placed.push([Math.round(box.top), box.left, char]);
+      logical.push(char);
+    }
+    placed.sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
+    out.push({logical: logical.join(""), visual: placed.map((p) => p[2]).join("")});
+  }
+  return out;
+}"""
+"""Every printing character of a text node, ordered by where it was actually painted.
+
+Sorted by rounded top then left, so a wrapped line reads as two lines rather than as a
+reordering. Whitespace is skipped at both ends of the comparison, for two reasons: the
+templates are pretty-printed, so every text node here is bracketed by a newline and an
+indent that no reader transcribes, and a collapsed space has a zero-width box whose
+``left`` sorts arbitrarily against its neighbours. What is left is exactly the string a
+reader copies out of the PNG.
+
+The logical string is what the markup holds; the visual string is what the reader gets.
+On an LTR page they are always equal, which is why this fence runs RTL."""
+
+URL_SITES: Final = (".credit__url", ".refs__meta")
+"""The two elements a reader is expected to copy by hand out of a PNG: the colophon's
+licence and source URIs, and the bibliography's reference URLs."""
+
+BIDI_NEUTRAL_TAIL: Final = "/"
+"""The character that moves. A solidus has no strong direction of its own, so on an RTL
+page it resolves to the paragraph's and jumps the run it was written after.
+
+Both sites have to *carry* one for a cell to be able to see the bug. The colophon does on
+real data -- three of the five fixture licence URIs end in a solidus -- but the reference
+URLs do not, so ``test_a_url_on_an_rtl_page_...`` supplies its own content rather than
+taking ``make_content()``'s. Measured: without that, the ``.refs__meta`` cells were green
+before the fix and after it, which is a passing test that proves nothing."""
+
+
+def content_with_bidi_neutral_urls() -> ResearchContent:
+    """``make_content()``, but every source URL ends in the character bidi reorders.
+
+    Built from ``make_facts(3)`` by ``replace`` rather than by hand, so the labels stay
+    the zero-padded non-prefixing ones the rest of this file relies on and only the URL
+    changes."""
+    facts = tuple(
+        replace(fact, source=make_source(url=f"{fact.source.url}/"))
+        for fact in make_facts(3)
+        if fact.source is not None
+    )
+    sources = tuple(make_source(url=f"{source.url}/") for source in (make_source(),))
+    return make_content(facts=facts, sources=sources)
+
+
+@BROWSER_LOOP
+@BODIES
+@pytest.mark.parametrize("selector", URL_SITES)
+async def test_a_url_on_an_rtl_page_is_painted_in_the_order_it_is_written(
+    chromium: Browser, template_id: str, selector: str
+) -> None:
+    """A URL renders the same left-to-right whichever direction the page runs.
+
+    A URL is an LTR string, and its trailing solidus is bidi-neutral: on an RTL page it
+    takes the paragraph direction and moves. Measured before the fix,
+    ``https://creativecommons.org/licenses/by/2.0/`` painted as
+    ``/https://creativecommons.org/licenses/by/2.0`` -- one character relocated from the
+    end to the front, silently, in the element whose entire purpose is to be transcribed
+    accurately. Attribution lands in a PNG, so a licence URI nobody can retype correctly
+    is attribution that is not discharged, and the bibliography beside it is what makes a
+    researched fact checkable.
+
+    This is a *visual* invariant, so no parser can see it and neither can a computed-style
+    comparison: the DOM, the text content and every computed value are identical before
+    and after. Only where the glyphs land differs.
+    """
+    composition = await compose_cell(
+        template_id,
+        Theme.LIGHT,
+        content_with_bidi_neutral_urls(),
+        tuple(panda.as_asset() for panda in PANDAS),
+    )
+    rtl = composition.html.replace('dir="ltr"', 'dir="rtl"', 1)
+    assert 'dir="rtl"' in rtl, (
+        "the composed document does not declare a direction on <html>, so forcing RTL "
+        "here changed nothing and this cell would measure an LTR page"
+    )
+
+    async with laid_out(chromium, replace(composition, html=rtl)) as page:
+        measured = await page.evaluate(VISUAL_ORDER_JS, selector)
+
+    assert measured, (
+        f"{selector} renders on no element of {template_id}, so this cell examined zero "
+        "URLs and would pass for a page that had dropped its attribution entirely"
+    )
+    reorderable = [row for row in measured if row["logical"].endswith(BIDI_NEUTRAL_TAIL)]
+    assert reorderable, (
+        f"none of the {len(measured)} {selector} elements on {template_id} ends in "
+        f"{BIDI_NEUTRAL_TAIL!r}, so none of them can be reordered and this cell would be "
+        f"green with the fix deleted. Measured: {[r['logical'] for r in measured]}"
+    )
+    scrambled = [row for row in measured if row["logical"] != row["visual"]]
+    assert not scrambled, (
+        f"{len(scrambled)} of {len(measured)} {selector} elements on {template_id} are "
+        f"painted in a different order from the one they are written in: "
+        f"{[(row['logical'], row['visual']) for row in scrambled]}. A reader copying "
+        "one of these out of the PNG gets a URL that was never published"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 9. Unreadable assets
 # --------------------------------------------------------------------------- #
