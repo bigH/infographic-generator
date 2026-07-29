@@ -50,15 +50,15 @@ Data flow, concretely:
 | `src/infographic_generator/research/` | Owner A | `Researcher` implementations (stub now, AI agent later) |
 | `src/infographic_generator/imagery/` | Owner B | `ImageSourcer` implementations |
 | `src/infographic_generator/composition/` | Owner C | `Composer` + Jinja2 templates |
-| `src/infographic_generator/render/` | Owner D | Playwright `Renderer` |
-| `pipeline.py`, `cli.py` | Owner D | wiring + argparse (typed stubs today) |
+| `src/infographic_generator/render/` | shared | Playwright `Renderer` |
+| `pipeline.py`, `cli.py` | shared | wiring + argparse — no single owner, coordinate before changing |
 | `tests/` | everyone | one test module per zone; `test_contracts.py` is the Architect's |
 | `assets/` | Owner B | local image fixtures for the stub |
 
 Nobody edits `core/` or `pyproject.toml`. Need a field or a dep? Ask the Architect.
 
-Zone D (`render/`, `pipeline.py`, `cli.py`) needs an owner. With only three implementers nothing
-wires the stages together and nothing runs end to end — assign it before the other three finish.
+Zone D (`render/`, `pipeline.py`, `cli.py`) is the shared zone — no single owner, per `CLAUDE.md`.
+All three implementers coordinate before changing it.
 
 ## Two decisions that are already made
 
@@ -80,15 +80,16 @@ text scraped from the web. Jinja2's default is `autoescape=False` — use `Envir
 
 ## Swapping a stub for a real AI agent
 
-The seam is the Protocol, so the swap is a constructor change in `pipeline.py` — nothing else moves.
+The seam is the Protocol, so the swap is one import and one argument in `cli.py::build_pipeline`, the
+only place the concrete stages are named — nothing else moves.
 
 1. Write the real class in your own package, e.g. `research/agent.py::LlmResearcher`, implementing
    the same `async def research(self, brief: Brief) -> ResearchContent`.
 2. Fill the provenance fields the stub hard-codes: real `Source(url=..., title=..., retrieved_at=...)`
    per fact, real `ImageCredit(license=..., author=..., source=...)` per image. These fields exist
    today precisely so this step is a fill-in, not a schema change.
-3. Point the pipeline at it: `Pipeline(researcher=LlmResearcher(client), ...)`. Keep the stub as the
-   default for offline tests.
+3. Point `cli.py::build_pipeline` at it: `Pipeline(researcher=LlmResearcher(client), ...)`. Keep the
+   stub as the default for offline tests.
 4. Tests written against the stub keep passing, because they assert on the types, not the panda.
 
 Rules of thumb: no I/O in `core/`; agents own their own retries, timeouts, and API keys; failures
