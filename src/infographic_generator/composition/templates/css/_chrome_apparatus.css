@@ -1,0 +1,63 @@
+{#-
+  The apparatus at the foot of every page: bibliography and attribution colophon.
+  Included last, after the body's own sheet, because it is the last thing on the
+  page and reads better next to the markup it styles.
+-#}
+/* --- apparatus ------------------------------------------------------ */
+.apparatus { border-top: 1px solid var(--rule-paper); padding-block: 28px 34px; }
+.apparatus__label { margin-bottom: 18px; }
+.refs { columns: 2; column-gap: 42px; }
+.refs li { break-inside: avoid; margin-bottom: 14px; font-size: 13.5px; line-height: 1.4; }
+.refs__meta {
+  display: block;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--dim-paper);
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+/* --- colophon ------------------------------------------------------- */
+/* Legally load-bearing: this is where CC BY / BY-SA attribution is discharged,
+   in a PNG where a link would be useless. It stays big enough to read and to
+   retype. */
+.colophon {
+  background: var(--patch);
+  color: var(--on-patch);
+  padding-block: 32px 36px;
+}
+.colophon__label { margin-bottom: 20px; }
+.credits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 14px 36px;
+}
+.credit {
+  border-top: 1px solid var(--rule-patch);
+  padding-top: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.credit__license {
+  font-family: var(--data);
+  font-size: 11.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent-patch);
+}
+.credit__work { color: var(--on-patch); }
+.credit__author { color: var(--dim-patch); }
+.credit__adapted { display: block; color: var(--dim-patch); text-transform: none; letter-spacing: 0.04em; }
+/* text-transform is inherited, and a licence URI has to be transcribed by hand
+   out of the PNG -- uppercasing it would break it. */
+.credit__url {
+  display: block;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--dim-patch);
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}

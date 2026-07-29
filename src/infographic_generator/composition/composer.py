@@ -23,7 +23,9 @@ from infographic_generator.core.models import (
 )
 
 TEMPLATE_DIR: Final = Path(__file__).resolve().parent / "templates"
-TEMPLATE_NAME: Final = "infographic.html.j2"
+TEMPLATE_NAME: Final = "stat_grid.html.j2"
+"""The registry's ``stat_grid`` layout: today's output, and the one that always
+works. It extends ``_base.html.j2``, which is chrome only and not renderable."""
 
 
 class HtmlComposer:
@@ -53,5 +55,5 @@ class HtmlComposer:
             width_px=brief.options.width_px,
             height_px=brief.options.height_px,
             device_scale_factor=brief.options.device_scale_factor,
-            title=page.title,
+            title=page.chrome.title,
         )

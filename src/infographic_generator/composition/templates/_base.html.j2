@@ -1,0 +1,80 @@
+{#-
+  The document shell every layout shares: head, the one inline stylesheet,
+  masthead, references apparatus and attribution colophon. A layout extends this
+  and fills ``body`` with its own markup, ``body_css`` with its own stylesheet,
+  ``masthead_aside`` with whatever it punches into the masthead, and
+  ``masthead_variant`` with the class that frames it.
+
+  Rendered by an Environment with autoescape=True, which escapes for HTML and
+  *not* for CSS. So: nothing researched, scraped or user-supplied may be
+  interpolated into the <style> element or into a style="" attribute. The only
+  values that go there are numbers this package computed itself -- the page width,
+  the gutter, ``figure.aspect``, ``stat.fit`` -- and the base64 font and image
+  payloads, whose alphabet cannot escape a CSS string.
+-#}
+<!doctype html>
+<html lang="{{ page.chrome.lang }}" dir="{{ page.chrome.direction }}" data-theme="{{ page.chrome.theme }}">
+<head>
+<meta charset="utf-8">
+<title>{{ page.chrome.title }}</title>
+<style>
+{% include "css/_chrome.css" %}
+{% block body_css %}{% endblock %}
+{% include "css/_chrome_apparatus.css" %}
+</style>
+</head>
+<body>
+<div class="rule"></div>
+
+<header class="masthead on-ink{% block masthead_variant %} masthead--flat{% endblock %}">
+  <div class="masthead__text gutter">
+    <h1 class="title fitted title--{{ page.chrome.title_scale }}" style="--fit: {{ page.chrome.title_fit }}">{{ page.chrome.title }}</h1>
+    {% if page.chrome.subtitle %}
+    <p class="subtitle">{{ page.chrome.subtitle }}</p>
+    {% endif %}
+  </div>
+{% block masthead_aside %}{% endblock %}
+</header>
+
+{% block body %}{% endblock %}
+
+{% if page.chrome.references %}
+<section class="apparatus gutter">
+  <p class="apparatus__label tick">Sources</p>
+  <ul class="refs">
+    {% for reference in page.chrome.references %}
+    <li>
+      {{ reference.title }}
+      <span class="refs__meta">
+        {%- if reference.publisher %}{{ reference.publisher }} — {% endif -%}
+        {{ reference.url }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if page.chrome.credits %}
+<footer class="colophon on-ink gutter">
+  <p class="colophon__label tick">Image credits</p>
+  <div class="credits">
+    {% for credit in page.chrome.credits %}
+    <div class="credit">
+      <p class="credit__license">
+        {{ credit.license }}
+        {% if credit.adapted %}<span class="credit__adapted">adapted from the original</span>{% endif %}
+        {% if credit.license_url %}<span class="credit__url">{{ credit.license_url }}</span>{% endif %}
+      </p>
+      <p>
+        {% if credit.work %}<span class="credit__work">{{ credit.work }}</span>{% endif %}
+        {% if credit.author %}<span class="credit__author"> — {{ credit.author }}</span>{% endif %}
+        {% if credit.source_url %}<span class="credit__url">{{ credit.source_url }}</span>{% endif %}
+      </p>
+    </div>
+    {% endfor %}
+  </div>
+</footer>
+{% endif %}
+</body>
+</html>

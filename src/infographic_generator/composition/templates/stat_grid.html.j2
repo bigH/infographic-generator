@@ -1,0 +1,82 @@
+{#-
+  Specimen-sheet layout. Ink masthead with the hero punched into it, a ledger of
+  statistics set two to a line and broken by inverted "patch" rows, prose set as
+  side-heads. Chrome -- shell, masthead frame, references, colophon -- comes from
+  ``_base.html.j2``.
+-#}
+{% extends "_base.html.j2" %}
+{% macro band(figures) -%}
+<section class="band gutter">
+  {% for figure in figures %}
+  <figure style="flex: {{ figure.aspect }} 1 0">
+    <img src="{{ figure.data_uri }}" alt="{{ figure.alt }}" style="aspect-ratio: {{ figure.aspect }}">
+    <figcaption>{{ figure.caption }}</figcaption>
+  </figure>
+  {% endfor %}
+</section>
+{%- endmacro %}
+{% block body_css %}
+{% include "css/stat_grid.css" %}
+{% endblock %}
+{#- The hero fills the masthead's second column, so the flat variant is for a
+    page that has no hero at all. `masthead--split` was never styled. -#}
+{% block masthead_variant %}{{ '' if page.body.hero else ' masthead--flat' }}{% endblock %}
+{% block masthead_aside %}
+  {% if page.body.hero %}
+  <figure class="hero">
+    <img src="{{ page.body.hero.data_uri }}" alt="{{ page.body.hero.alt }}">
+    {# No caption means nothing to darken the image for. #}
+    {% if page.body.hero.caption %}
+    <figcaption class="hero__credit">{{ page.body.hero.caption }}</figcaption>
+    {% endif %}
+  </figure>
+  {% endif %}
+{% endblock %}
+{% block body %}
+{% if page.chrome.summary %}
+<section class="lede on-ink gutter">
+  <p>{{ page.chrome.summary }}</p>
+</section>
+{% endif %}
+
+{% for block in page.body.ledger %}
+<section class="ledger">
+  {% for stat in block %}
+  <div class="row{{ ' row--full' if stat.full_width }}{{ ' row--patch on-ink' if stat.feature }}">
+    <div class="row__head">
+      <p class="row__label">{{ stat.label }}</p>
+      <p class="row__value fitted value--{{ stat.scale }}" style="--fit: {{ stat.fit }}">{{ stat.value }}
+        {%- if stat.unit %}<span class="row__unit">{{ stat.unit }}</span>{% endif %}</p>
+    </div>
+    <div class="row__detail">
+      {% if stat.detail %}<p>{{ stat.detail }}</p>{% endif %}
+      {% if stat.attribution %}<p class="row__src tick">{{ stat.attribution }}</p>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% if loop.first and page.body.band %}
+{{ band(page.body.band) }}
+{% endif %}
+{% endfor %}
+
+{% if not page.body.ledger and page.body.band %}
+{{ band(page.body.band) }}
+{% endif %}
+
+{% if page.body.sections %}
+<div class="essay">
+  {% for section in page.body.sections %}
+  <section class="section gutter">
+    <h2 class="section__heading">{{ section.heading }}</h2>
+    <div class="section__body">
+      <p>{{ section.body }}</p>
+      {% if section.attributions %}
+      <p class="section__src tick">{{ section.attributions | join(' · ') }}</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

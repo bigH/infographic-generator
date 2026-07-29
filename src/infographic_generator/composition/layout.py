@@ -9,6 +9,12 @@ layout description rather than a program.
 The layout is a specimen sheet: an ink masthead with the hero punched into it, a
 ledger of statistics set two to a line, and inverted "patch" rows that break the
 ledger's rhythm the way the animal's markings break its coat.
+
+The view model comes in two halves. :class:`PageChrome` is the furniture every
+layout shares -- shell, fonts, masthead, bibliography, colophon -- and a body
+class is one layout's own information architecture. Splitting them is what keeps
+the colophon honest: credits are derived from the figures the *chosen* body
+actually places, never from the assets it was handed.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeAlias
 from urllib.parse import urlsplit
 
 from infographic_generator.core.encoding import data_uri, to_data_uri
@@ -154,8 +160,8 @@ class Section:
 
 
 @dataclass(frozen=True, slots=True)
-class Page:
-    """Everything the template renders, already decided."""
+class PageChrome:
+    """The page furniture every layout shares: shell, masthead, apparatus."""
 
     lang: str
     direction: str
@@ -166,15 +172,33 @@ class Page:
     title_fit: str
     subtitle: str
     summary: str
-    hero: Figure | None
-    ledger: Sequence[Sequence[Stat]]
-    band: Sequence[Figure]
-    sections: Sequence[Section]
     references: Sequence[Reference]
     credits: Sequence[Credit]
     width_px: int
     gutter_px: int
     min_height_px: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class StatGridBody:
+    """The stat-grid layout's own information architecture."""
+
+    hero: Figure | None
+    ledger: Sequence[Sequence[Stat]]
+    band: Sequence[Figure]
+    sections: Sequence[Section]
+
+
+PageBody: TypeAlias = StatGridBody
+"""Today there is one body shape; a later phase widens this to a union."""
+
+
+@dataclass(frozen=True, slots=True)
+class Page:
+    """Everything the template renders, already decided."""
+
+    chrome: PageChrome
+    body: PageBody
 
 
 def build_page(
@@ -183,8 +207,13 @@ def build_page(
     """Assemble the view model. Raises ``OSError`` for an unreadable asset."""
     hero, band = _imagery(images)
     title = _page_title(brief, content)
-    shown = tuple(figure for figure in (hero, *band) if figure is not None)
-    return Page(
+    body = StatGridBody(
+        hero=hero,
+        ledger=_ledger(content.facts),
+        band=band,
+        sections=tuple(_section(section) for section in content.sections),
+    )
+    chrome = PageChrome(
         lang=_bcp47(brief.locale),
         direction=_direction(brief.locale),
         theme=brief.options.theme,
@@ -194,15 +223,28 @@ def build_page(
         title_fit=_fit(_longest_word(title), _TITLE_ADVANCE),
         subtitle=content.subtitle,
         summary=content.summary,
-        hero=hero,
-        ledger=_ledger(content.facts),
-        band=band,
-        sections=tuple(_section(section) for section in content.sections),
         references=_references(content),
-        credits=tuple(f.credit for f in shown if _has_attribution(f.credit)),
+        credits=_credits_of(body),
         width_px=brief.options.width_px,
         gutter_px=_gutter(brief.options.width_px),
         min_height_px=brief.options.height_px,
+    )
+    return Page(chrome=chrome, body=body)
+
+
+def _credits_of(body: StatGridBody) -> tuple[Credit, ...]:
+    """Credit exactly the figures the body places, in the order it places them.
+
+    Attribution has to track what is *displayed*: crediting an image nobody can
+    see is noise, and the same derivation is what guarantees a displayed one is
+    never missed. An asset the body never placed was never encoded either, so it
+    is neither shown nor credited.
+    """
+    lead: tuple[Figure, ...] = () if body.hero is None else (body.hero,)
+    return tuple(
+        figure.credit
+        for figure in (*lead, *body.band)
+        if _has_attribution(figure.credit)
     )
 
 

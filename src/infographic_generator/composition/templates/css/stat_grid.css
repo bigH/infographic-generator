@@ -1,0 +1,159 @@
+{#-
+  The stat-grid body's own stylesheet: the hero punched into the masthead, the
+  lede, the two-up ledger, the image bands and the narrative side-heads. Included
+  between the two chrome sheets in ``_base.html.j2``.
+-#}
+/* --- hero (punched into the masthead) -------------------------------- */
+.hero { position: relative; overflow: hidden; }
+/* The one deliberate crop on the page: the hero fills the masthead's height. */
+.hero img { height: 100%; object-fit: cover; }
+.hero__credit {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  padding: 24px 16px 9px;
+  background: linear-gradient(to top, rgba(8, 7, 4, 0.78), rgba(8, 7, 4, 0));
+  color: #eeeade;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-align: end;
+}
+
+/* --- lede ----------------------------------------------------------- */
+.lede {
+  background: var(--patch);
+  color: var(--on-patch);
+  padding-block: 30px 40px;
+}
+.lede p {
+  max-width: 76ch;
+  border-top: 1px solid var(--rule-patch);
+  padding-top: 24px;
+  font-size: 24px;
+  line-height: 1.44;
+}
+
+/* --- ledger --------------------------------------------------------- */
+/* Two stats to a line. Patch rows and a trailing orphan span both columns; the
+   orphan spans so an odd count does not read as a mistake. */
+.ledger {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: var(--pad);
+  padding-inline: var(--pad);
+}
+.row {
+  border-top: 1px solid var(--rule-paper);
+  padding-block: 15px 20px;
+}
+/* A row that spans both columns has room to set its gloss beside the numeral
+   rather than under it, bottom-aligned with it. `full_width` decides the split;
+   `feature` decides the ink. */
+.row--full {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  column-gap: var(--pad);
+  align-items: end;
+}
+.row--full .row__detail { margin-top: 0; }
+/* The query container is the label-and-value stack, not the whole row, so a
+   value sized against it stays inside its own column however the row is split. */
+.row__head { container-type: inline-size; }
+.row__label {
+  font-family: var(--data);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  color: var(--accent-paper);
+}
+.row__value {
+  margin-top: 6px;
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 0.94;
+  letter-spacing: -0.02em;
+  overflow-wrap: break-word;
+}
+.value--xl { --size: var(--s5); }
+.value--l  { --size: var(--s4); }
+.value--m  { --size: var(--s3); }
+.value--s  { --size: var(--s2); }
+.row__unit {
+  font-family: var(--data);
+  font-size: 0.3em;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  margin-inline-start: 0.34em;
+  color: var(--dim-paper);
+}
+.row__detail {
+  margin-top: 12px;
+  max-width: 72ch;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--dim-paper);
+}
+.row__src { margin-top: 9px; }
+
+/* The feature row breaks the ledger's rhythm: full bleed and inverted. */
+.row--patch {
+  background: var(--patch);
+  color: var(--on-patch);
+  border-top: 0;
+  margin-inline: calc(var(--pad) * -1);
+  padding-block: 30px 32px;
+  padding-inline: var(--pad);
+}
+.row--patch .row__label { color: var(--accent-patch); }
+.row--patch .row__value { margin-top: 12px; }
+.row--patch .value--xl { --size: var(--s7); }
+.row--patch .value--l  { --size: var(--s6); }
+.row--patch .value--m  { --size: var(--s5); }
+.row--patch .value--s  { --size: var(--s4); }
+.row--patch .row__unit { color: var(--dim-patch); }
+.row--patch .row__detail { color: var(--dim-patch); }
+.row--patch .row__src { color: var(--dim-patch); }
+
+/* --- image bands ---------------------------------------------------- */
+/* Justified strip: each figure's flex-grow is its aspect ratio, so the widths
+   come out proportional and every image lands on the same height without a crop.
+   align-self keeps a tall caption from stretching its neighbour's image, and the
+   inner flex column keeps the caption inside the figure instead of over it. */
+.band {
+  display: flex;
+  gap: 18px;
+  padding-block: 26px;
+}
+.band figure { display: flex; flex-direction: column; align-self: start; min-width: 0; }
+.band figcaption {
+  margin-top: 10px;
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+  color: var(--dim-paper);
+}
+
+/* --- narrative ------------------------------------------------------ */
+.essay { padding-block: 10px 6px; }
+.section {
+  display: grid;
+  grid-template-columns: minmax(170px, 280px) 1fr;
+  gap: 40px;
+  border-top: 1px solid var(--rule-paper);
+  padding-block: 24px 28px;
+}
+.section__heading {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: var(--s0);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  border-inline-start: 2px solid var(--accent-paper);
+  padding-inline-start: 14px;
+}
+.section__body { max-width: 78ch; }
+.section__src { margin-top: 12px; }

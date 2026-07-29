@@ -1,0 +1,156 @@
+{#-
+  Chrome stylesheet: embedded faces, design tokens, reset, the devices every
+  layout borrows, and the masthead frame. Included inside the one ``<style>``
+  element in ``_base.html.j2``, ahead of the body's own sheet, so a body rule can
+  refine a chrome rule without either needing !important.
+
+  autoescape escapes for HTML and *not* for CSS, so nothing researched, scraped or
+  user-supplied may be interpolated here. The only values that reach this file are
+  numbers this package computed itself and the base64 font payloads, whose
+  alphabet cannot escape a CSS string.
+-#}
+{% for face in page.chrome.fonts %}
+@font-face {
+  font-family: "{{ face.family }}";
+  font-style: {{ face.style }};
+  font-weight: {{ face.weight }};
+  font-display: block;
+  src: url({{ face.data_uri }}) format("woff2");
+}
+{% endfor %}
+
+:root {
+  --w: {{ page.chrome.width_px }}px;
+  --pad: {{ page.chrome.gutter_px }}px;
+
+  /* Embedded faces first, then nothing but CSS generics. Naming a real family
+     here -- Georgia, Menlo, DejaVu Sans Mono -- would put the render back at the
+     mercy of what happens to be installed. The generics are only ever reached
+     for glyphs outside the embedded latin subsets. */
+  --display: "Ledger Slab", ui-serif, serif;
+  --body: "Ledger Text", ui-serif, serif;
+  --data: "Ledger Mono", ui-monospace, monospace;
+
+  /* One display ramp: eight rungs from 27px at a ratio of 1.23. Every large size
+     below picks a rung by role rather than inventing a number -- so not every rung
+     is in use at once, and adding a role means choosing one, not adding one. */
+  --s0: 27px;
+  --s1: 33px;
+  --s2: 41px;
+  --s3: 50px;
+  --s4: 62px;
+  --s5: 76px;
+  --s6: 94px;
+  --s7: 116px;
+
+  --paper: #eceae2;
+  --patch: #17150f;
+  --on-paper: #1a1712;
+  --on-patch: #f1efe6;
+  --dim-paper: #6a6558;
+  --dim-patch: #a29e8d;
+  --rule-paper: #c8c4b7;
+  --rule-patch: #3b3729;
+  --accent-paper: #5c6a12;
+  --accent-patch: #bccb4e;
+}
+:root[data-theme="dark"] {
+  --paper: #14130d;
+  --patch: #eceae2;
+  --on-paper: #eeece3;
+  --on-patch: #17150f;
+  --dim-paper: #8e8a79;
+  --dim-patch: #6a6558;
+  --rule-paper: #343024;
+  --rule-patch: #c8c4b7;
+  --accent-paper: #bccb4e;
+  --accent-patch: #5c6a12;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { background: var(--paper); }
+body {
+  width: var(--w);
+  background: var(--paper);
+  color: var(--on-paper);
+  font-family: var(--body);
+  font-size: 16.5px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+{% if page.chrome.min_height_px %}
+body { min-height: {{ page.chrome.min_height_px }}px; }
+{% endif %}
+/* Every image is constrained by CSS alone; the inline aspect-ratio governs its
+   height, so nothing here may set one. */
+img { display: block; width: 100%; height: auto; }
+li { list-style: none; }
+
+.gutter { padding-inline: var(--pad); }
+.rule { height: 6px; background: var(--accent-paper); }
+
+/* --- shared devices ------------------------------------------------ */
+.tick {
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  border-inline-start: 2px solid var(--accent-paper);
+  padding-inline-start: 9px;
+  color: var(--dim-paper);
+}
+.on-ink .tick { border-inline-start-color: var(--accent-patch); color: var(--dim-patch); }
+
+/* A display string is capped twice: --size is the editorial ceiling for its
+   length, --fit is what its column can actually hold. The smaller wins, so
+   narrowing the page shrinks type instead of wrapping it. */
+.fitted { font-size: min(var(--size), var(--fit)); }
+
+/* The display face defaults to old-style figures, which at 100px reads as a row
+   of digits at four different heights. Lining and tabular throughout. */
+.title, .row__value, .section__heading {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+/* --- masthead ------------------------------------------------------ */
+.masthead {
+  display: grid;
+  grid-template-columns: 46fr 54fr;
+  background: var(--patch);
+  color: var(--on-patch);
+}
+.masthead--flat { grid-template-columns: 1fr; }
+.masthead__text {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 22px;
+  min-height: 430px;
+  padding-block: 54px 44px;
+}
+.masthead--flat .masthead__text { min-height: 0; padding-block: 68px 48px; }
+
+.title {
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+.title--xl { --size: var(--s6); }
+.title--l  { --size: var(--s5); }
+.title--m  { --size: var(--s4); }
+.title--s  { --size: var(--s3); }
+.masthead--flat .title--xl { --size: var(--s7); }
+
+.subtitle {
+  max-width: 34ch;
+  font-size: 20px;
+  font-style: italic;
+  line-height: 1.34;
+  color: var(--dim-patch);
+}
+.masthead--flat .subtitle { max-width: 60ch; }
