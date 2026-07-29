@@ -1644,6 +1644,25 @@ NARROW_FACTS = (
 )
 
 
+ORDINARY_FACTS = (
+    *NARROW_FACTS,
+    Fact(
+        label="Newborn cub size",
+        value="1/900th of its mother",
+        unit=None,
+        detail="Blind, pink and about 100 g.",
+        source=make_source(url="https://www.worldwildlife.org/species/giant-panda"),
+    ),
+)
+"""``NARROW_FACTS`` plus the one fact from the real ``assets/panda/facts.json`` with
+the worst size-against-prose ratio, and nothing adversarial: this is content a
+researcher plausibly returns, not a 62-character stress string.
+
+That seventh fact is what the legibility floor turns on. 21 characters earn a
+``--fit`` of 7.94cqw, so it needs 208px of column before it reaches body copy at all,
+and in a 640px ``ranked_list`` row it was the figure every wider fix left behind."""
+
+
 DISPLAY_NUMBER_JS = """
 (sel) => {
   const values = Array.from(document.querySelectorAll(sel.value));
@@ -1656,29 +1675,21 @@ DISPLAY_NUMBER_JS = """
       .filter(el => !el.closest(sel.container))
       .map(el => el.innerText.replace(/\\s+/g, ' ').trim().slice(0, 40)),
     values: housed.map(el => {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const rects = Array.from(range.getClientRects())
-        .filter(r => r.width > 0.5 && r.height > 0.5);
-      const lines = [];
-      for (const r of rects.slice().sort((a, b) => a.top - b.top)) {
-        const line = lines.find(l => r.top < l.bottom - 1 && r.bottom > l.top + 1);
-        if (line) {
-          line.top = Math.min(line.top, r.top);
-          line.bottom = Math.max(line.bottom, r.bottom);
-        } else {
-          lines.push({top: r.top, bottom: r.bottom});
-        }
-      }
+      const style = getComputedStyle(el);
+      const lineHeight = parseFloat(style.lineHeight);
+      const height = el.getBoundingClientRect().height;
       const cell = el.closest(sel.container);
       return {
         text: el.innerText.replace(/\\s+/g, ' ').trim(),
-        lines: lines.length,
+        lines: lineHeight > 0 ? Math.round(height / lineHeight) : 0,
+        line_height_px: lineHeight > 0 ? lineHeight : 0,
+        height_px: height,
         rungs: [...el.classList].filter(c => c.startsWith(sel.scale_prefix)),
-        size: getComputedStyle(el).getPropertyValue('--size').trim(),
+        size: style.getPropertyValue('--size').trim(),
         fit: el.style.getPropertyValue('--fit').trim(),
-        font_px: parseFloat(getComputedStyle(el).fontSize),
+        font_px: parseFloat(style.fontSize),
         container_type: getComputedStyle(cell).containerType,
+        cell_px: cell.getBoundingClientRect().width,
         cell_overflow: cell.scrollWidth - cell.clientWidth,
         value_overflow: el.scrollWidth - el.clientWidth,
       };
@@ -1695,12 +1706,32 @@ text, so the failure can name the element. And ``values`` measures only the ones
 are housed, which is why ``cell`` is never null and there is no ternary reporting a
 comfortable zero for a cell that does not exist.
 
-Lines are counted by clustering the range's client rects on vertical overlap, not by
-counting the rects: a value carries a small-font unit span, so an unwrapped value
-already yields three rects at two different ``top`` coordinates, and only overlap
-tells a second line from a smaller sibling on the same one. That clustering suits
-display numbers and nothing else -- ``.title`` sets ``line-height: 0.98``, where
-consecutive line boxes overlap and every line merges into one.
+Lines are counted as ``round(height / line-height)`` off the element's own box and
+computed ``line-height``. Clustering the range's client rects on vertical overlap --
+what this measurement did until commit 5 -- cannot count these elements: every rule
+involved sets a line-height tighter than the face's em box (``.rank__value`` 0.96,
+``.chip__value`` 0.98): at 50px type the line box is 48px and each line's rect is
+60px, so consecutive rects overlap by 12px and merge into one cluster. Measured with
+the ``--fit`` cap lifted so values genuinely wrap, the old clustering reported one
+line for 13 of the 14 values in the two narrow bodies -- ``26-84 lb (12-38 kg)``
+among them, a 144px box exactly three 48px lines deep -- which made ``lines == 1``
+close to a tautology. Clustering on ``top`` is not the fix either: a
+value carries a smaller unit span whose rects sit at a different ``top`` on the same
+line, so top-grouping overcounts. (``TITLE_LINES_JS`` can group per character on
+``top`` precisely because ``.title`` has no differently-sized child.)
+``line_height_px`` and ``height_px`` travel with the count so a failure shows the
+division, and a ``line-height`` that resolves to no length reports zero lines rather
+than a plausible one.
+
+Height over leading has its own failure mode, in the other direction: an inline child
+taller than its parent's line box stretches the box without adding a line, and the
+division then over-counts. Overlay ``.rank__unit { font-size: 3em; line-height: 2 }``
+and values whose own text still sets on one line report 6, 13 and 19 lines; the same
+overlay on ``.chip__unit`` reports 12 and 19. It takes that much: at
+``line-height: 4`` on the unit's own 0.28em the box grows to 1.17 of the value's line
+and ``round`` absorbs it. Unreachable as the bodies stand -- every unit span is
+sub-em with a numeric ``line-height`` below 1 -- and it fails loud rather than
+passing quietly, which is the right way round for a counter.
 
 ``size`` is the computed ``--size``, and it is what the assertions read: a class is
 only a proxy for a *matching rule*, and a rung renamed on one side of the split --
@@ -1720,6 +1751,13 @@ class DisplayNumber:
 
     text: str
     lines: int
+    """``round(height_px / line_height_px)``, or 0 if the line-height resolved to no
+    length at all."""
+    line_height_px: float
+    """The computed ``line-height`` in px, and the divisor above: a keyword or a
+    ``normal`` that resolves to no length arrives as 0 and takes ``lines`` with it."""
+    height_px: float
+    """The value's own box height: one ``line_height_px`` per line it set."""
     rungs: tuple[str, ...]
     """The ``--size`` rung classes the body put on it, e.g. ``("value--xl",)``."""
     size: str
@@ -1731,6 +1769,10 @@ class DisplayNumber:
     container_type: str
     """The cell's computed ``container-type``: ``"inline-size"`` if the value's
     ``cqw`` units really resolve against it, ``"normal"`` if they do not."""
+    cell_px: float
+    """The query container's own width, so ``fit`` can be turned back into pixels:
+    ``7.94cqw`` of a 211px cell is 16.8px, and that product is the diagnosis where a
+    bare "16.8px against 16.5px" only says which side of the line it fell on."""
     cell_overflow: float
     value_overflow: float
 
@@ -1766,11 +1808,14 @@ def _read_display_number(row: Mapping[str, object]) -> DisplayNumber:
     return DisplayNumber(
         text=_text(row["text"]),
         lines=int(_number(row["lines"])),
+        line_height_px=_number(row["line_height_px"]),
+        height_px=_number(row["height_px"]),
         rungs=tuple(_text(rung) for rung in _rows(row["rungs"])),
         size=_text(row["size"]),
         fit=_text(row["fit"]),
         font_px=_number(row["font_px"]),
         container_type=_text(row["container_type"]),
+        cell_px=_number(row["cell_px"]),
         cell_overflow=_number(row["cell_overflow"]),
         value_overflow=_number(row["value_overflow"]),
     )
@@ -1796,12 +1841,19 @@ def test_the_no_wrap_envelope_still_names_the_current_fit_floor() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "facts", [NARROW_FACTS, ORDINARY_FACTS], ids=["narrow", "ordinary"]
+)
 @pytest.mark.parametrize("width_px", [1000, 640])
 @IN_BOTH_THEMES
 @BODIES
 @BROWSER_LOOP
 async def test_display_numbers_stay_on_one_line_inside_their_cell(
-    chromium: Browser, template_id: str, theme: Theme, width_px: int
+    chromium: Browser,
+    template_id: str,
+    theme: Theme,
+    width_px: int,
+    facts: Sequence[Fact],
 ) -> None:
     """The body's headline numbers never wrap, and they shrink to fit their cell
     rather than overflowing it.
@@ -1812,10 +1864,20 @@ async def test_display_numbers_stay_on_one_line_inside_their_cell(
     410px. 640px is where the ``--fit`` cap starts carrying the page on its own:
     without it ``26-84 lb (12-38 kg)`` sets at 76px in a 269px column and breaks
     across three lines.
+
+    Both fact sets, because the row the container widths were chosen for lives in
+    only one of them. ``1/900th of its mother`` is what ``.rank__figure``'s basis and
+    ``.chips``' column width were sized against, and ``NARROW_FACTS`` does not
+    contain it -- so without ``ORDINARY_FACTS`` here the deciding row was measured
+    for size and for nothing else: not for wrapping, not for overflow, and not for
+    whether its cell is still a query container. That last one is why this test and
+    the legibility floor are not interchangeable: with ``container-type: normal`` the
+    ``cqw`` cap falls back to the viewport, and the floor then reads 1.636x and
+    passes while values wrap onto three lines.
     """
     selectors = BODY_SELECTORS[template_id]
     composition = await compose_cell(
-        template_id, theme, make_content(facts=NARROW_FACTS), width_px=width_px
+        template_id, theme, make_content(facts=facts), width_px=width_px
     )
 
     async with laid_out(chromium, composition) as page:
@@ -1829,9 +1891,9 @@ async def test_display_numbers_stay_on_one_line_inside_their_cell(
         )
     report = read_display_numbers(measured)
 
-    assert report.value_count == len(NARROW_FACTS), (
+    assert report.value_count == len(facts), (
         f"{template_id}: {selectors.value!r} matched {report.value_count} elements, "
-        f"expected one per fact ({len(NARROW_FACTS)}) -- at zero this cell measured "
+        f"expected one per fact ({len(facts)}) -- at zero this cell measured "
         "nothing at all"
     )
     assert report.container_count == report.value_count, (
@@ -1875,7 +1937,106 @@ async def test_display_numbers_stay_on_one_line_inside_their_cell(
             f"{template_id}: {value.text!r} overflows its own box by "
             f"{value.value_overflow}px"
         )
+        assert value.line_height_px > 0, (
+            f"{template_id}: {value.text!r} resolves its line-height to no length, so "
+            "the line count is a division by nothing and reads as zero -- a keyword "
+            "line-height has to be measured some other way than height over leading"
+        )
         assert value.lines == 1, (
             f"{template_id}: {value.text!r} wrapped onto {value.lines} lines at a "
-            f"{width_px}px page; a headline figure is meant to shrink to fit, not break"
+            f"{width_px}px page ({value.height_px}px of box over a "
+            f"{value.line_height_px}px line); a headline figure is meant to shrink to "
+            "fit, not break"
+        )
+
+
+@pytest.mark.parametrize("width_px", [1000, 640])
+@IN_BOTH_THEMES
+@BODIES
+@BROWSER_LOOP
+async def test_display_numbers_are_no_smaller_than_the_prose_they_headline(
+    chromium: Browser, template_id: str, theme: Theme, width_px: int
+) -> None:
+    """A body's headline figure is never set smaller than the body copy around it.
+
+    1.0x is the whole claim, and it is a fact about hierarchy rather than a taste in
+    ratios: a figure that reads smaller than the prose it headlines has inverted the
+    page. ``>=`` rather than ``>`` because 1.0x *is* the claim and sub-pixel rounding
+    should not be what decides it. Exact equality is not a near miss, though: none of
+    the 84 values these twelve cells measure lands on body copy, the closest being
+    ``1/900th of its mother`` at 1.018x -- the row ``.rank__figure``'s basis was tuned
+    for -- while every known way to land there exactly is a broken page, a renamed
+    rung or a dropped unit leaving ``min()`` invalid. That is what the assertion above
+    the comparison is for, and it is what gives ``>=`` strict ``>``'s reach without
+    moving the threshold.
+
+    Body copy is read off the page, inside a reading-size band rather than against a
+    literal 16.5. ``_chrome.css`` says 16.5px today; a test that hardcoded it would
+    keep passing if the page's reading size moved out from under the figures, and a
+    floor that is purely relative slides down with it -- at 8px body copy both bugs
+    commit 5 fixed measure over 1.6x.
+
+    Ordinary content, no images: the fixtures plus the worst-ratio fact from the real
+    ``facts.json``, and measurably identical numbers with the panda set carried, so
+    this fence buys nothing by paying for it. Both widths matter -- until commit 5
+    ``process_flow`` read 0.789x and ``ranked_list`` 0.903x at 640px while both
+    cleared the floor comfortably at 1000px.
+    """
+    selectors = BODY_SELECTORS[template_id]
+    composition = await compose_cell(
+        template_id, theme, make_content(facts=ORDINARY_FACTS), width_px=width_px
+    )
+
+    async with laid_out(chromium, composition) as page:
+        measured: dict[str, object] = await page.evaluate(
+            DISPLAY_NUMBER_JS,
+            {
+                "value": selectors.value,
+                "container": selectors.container,
+                "scale_prefix": selectors.scale_prefix,
+            },
+        )
+    report = read_display_numbers(measured)
+
+    assert report.value_count == len(ORDINARY_FACTS), (
+        f"{template_id}: {selectors.value!r} matched {report.value_count} elements, "
+        f"expected one per fact ({len(ORDINARY_FACTS)}) -- at zero the comparison "
+        "below runs over nothing and this cell passes without measuring a figure"
+    )
+    assert not report.orphans, (
+        f"{template_id}: display numbers with no {selectors.container!r} ancestor are "
+        f"left out of the measurement entirely: {list(report.orphans)}"
+    )
+    assert 14.0 <= report.body_px <= 20.0, (
+        f"{template_id}: the page reports {report.body_px}px body copy, outside any "
+        "reading size -- _chrome.css sets 16.5px. The floor below is relative, so a "
+        "reading size that moved takes the floor with it: at 8px body copy both bugs "
+        "commit 5 fixed measure over 1.6x and this fence passes on them"
+    )
+
+    for value in report.values:
+        assert value.size and value.fit, (
+            f"{template_id}: {value.text!r} resolves --size to {value.size!r} and "
+            f"--fit to {value.fit!r} (classes {list(value.rungs)}). With either half "
+            "missing, min(var(--size), var(--fit)) is invalid at computed-value time "
+            f"and the figure silently inherits body copy -- here {value.font_px}px "
+            f"against {report.body_px}px prose, which clears the floor below at "
+            "exactly 1.0x on a thoroughly broken page"
+        )
+        assert value.font_px != report.body_px, (
+            f"{template_id}: {value.text!r} is set at exactly {value.font_px}px -- the "
+            f"page's own body-copy size -- with --size {value.size!r} and --fit "
+            f"{value.fit!r} (classes {list(value.rungs)}). "
+            "min(var(--size), var(--fit)) is invalid at computed-value time whenever "
+            "either half fails to resolve to a length, not only when it is missing: "
+            "a renamed rung, a dropped px, a "
+            "dropped cqw. font-size then inherits prose and clears the floor below at "
+            "exactly 1.0x. No working cell lands on body copy; the closest is 1.018x"
+        )
+        assert value.font_px >= report.body_px, (
+            f"{template_id} in {theme.value} at {width_px}px: {value.text!r} is set at "
+            f"{value.font_px}px against {report.body_px}px body copy "
+            f"({value.font_px / report.body_px:.3f}x of it), so the figure meant to "
+            f"headline the page reads smaller than the prose it headlines "
+            f"({value.fit} of a {value.cell_px}px {selectors.container} cell)"
         )

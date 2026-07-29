@@ -59,12 +59,22 @@
   color: var(--accent-paper);
 }
 .rank__text { flex: 1 1 auto; min-width: 0; }
+/* `hyphens` before `overflow-wrap`, because they are a ladder and not a pair: a
+   legal break with a hyphen first, a mid-word chop only when nothing else will do.
+   Measured in headless chromium, and narrower than it looks: the en dictionary is
+   there (`conservation`, `population`, `fragmentation` all break and render the
+   hyphen) but it offers no opportunity for a *capitalized* word -- `Conservation`,
+   `Population`, `Vulnerable`, `National` all decline. Labels lead with a capital,
+   so this cannot save the leading word; `.rank__figure`'s 37.5% basis is what
+   keeps the column wide enough for it. What this earns is the long lowercase word
+   further into a label. */
 .rank__label {
   font-family: var(--display);
   font-weight: 700;
   font-size: var(--s0);
   line-height: 1.12;
   letter-spacing: -0.012em;
+  hyphens: auto;
   overflow-wrap: break-word;
   font-variant-numeric: lining-nums tabular-nums;
 }
@@ -79,10 +89,45 @@
 
 /* The value's own column, and the query container the width-derived cap is
    measured against -- the whole row would be the wrong answer, because the value
-   never gets the whole row. */
+   never gets the whole row.
+
+   `0 0`, because a shrinkable basis is not a basis: at 640px, where the row's
+   content box is 564px (640 less two 38px gutters), the real ten-fact content
+   collapsed every row's column to 115.84px -- 20.5% of the row, not the declared
+   34% -- while the seven-fact fixtures hold 34% on every row but the lead, which
+   takes 29.7%. Two content sets, two different collapses, which is the second
+   reason not to tune this against the fixtures. But the shrink was the smaller
+   half of the bug.
+   `1/900th of its mother` is 21 characters, so `_fit` gives it
+   `--fit: 100/(21 x 0.60) = 7.94cqw`, and it needs 16.5/0.0794 = 207.8px --
+   36.85% of the row -- merely to match the 16.5px prose it headlines. 34%
+   renders it at 15.2px whether it shrinks or not.
+
+   The usable band is 0.75pp wide, and the basis sets both of its edges -- the type
+   sets neither. Below 36.85% the figure sinks under body copy and the legibility
+   fence goes red: 36.8% measures 0.999x. Above 37.6% the text column falls under
+   239.5px, which is what `Conservation` sets to at the lead label's 41px rung on
+   the real ten-fact content, and the label chops mid-word: 37.6% leaves 239.9px
+   and holds, 37.7% leaves 239.4px and renders `Conservatio / n status`. (The
+   fixtures' own first label wrap comes later, at 38.1%, which is why they cannot
+   be what this is tuned against.) 37.5% stops one step short of that edge for a
+   whole pixel of margin instead of half of one -- 240.5px of column against
+   239.5px of word -- and pays nothing for it: the figure sets at 16.79px, 1.018x
+   prose. Lower would only trade floor headroom for column nobody needs.
+
+   The row has no slack left, and one more character proves it: a 22-character
+   value earns 100/13.2 = 7.58cqw, which is 16.03px in this 211.5px column, red.
+   Reaching 16.5px would need 217.7px, 38.6% of the row, well past where the label
+   chops. There is no basis that serves both.
+
+   TODO: the slack is not in the basis. At 640px `.rank__ordinal`'s 64px gutter
+   plus the row's two 24px gaps take 112px -- 19.9% of the row -- before either
+   text column gets anything. Making `--rank-gutter` and `.rank`'s `gap`
+   proportional to the row would hand the value column about 4pp, with no media
+   query and without taking it from the label. */
 .rank__figure {
   container-type: inline-size;
-  flex: 0 1 34%;
+  flex: 0 0 37.5%;
   margin-inline-start: auto;
   text-align: end;
 }

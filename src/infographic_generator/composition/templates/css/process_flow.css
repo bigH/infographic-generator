@@ -98,9 +98,26 @@
 }
 .strip__label { margin-bottom: 20px; }
 /* Columns rather than a grid, so a short chip does not leave a tall hole beside
-   a long one -- the same device the references apparatus uses. Three columns is
-   the widest count a headline value fits in without breaking mid-word. */
-.chips { columns: 3; column-gap: 36px; }
+   a long one -- the same device the references apparatus uses. A width *and* a
+   count, which is one rule and not two: given both, the count is a maximum, so the
+   width still chooses how many columns a narrow page gets and the count only stops
+   a wide one going further.
+
+   The width is what fixes the bug. `columns: 3` alone held three columns at every
+   page width, and at 640px that is a 164px chip setting its headline value at
+   13.0px against 16.5px prose. Measured count is
+   `min(3, floor((strip + gap) / (length + gap)))` on the strip's content box:
+   3 at the shipped 1200px default (1056px strip) and at 1000 (880px), 2 at 900
+   (792px) and 640 (564px), where the 264px chip reads 20.96px. 260px is the length
+   with room on both sides of that 1000-versus-900 split: three columns at 1000
+   needs at most 269px, two at 900 needs more than 240px.
+
+   The count is what keeps a wide page from thinning. `cli.py`'s own usage example
+   renders at 1600, and a bare length gives four 325px columns there and four 281px
+   ones at 1400, where the minimum figure drops back to 22.31px and ten chips fall
+   2/3/2/3 with one column ending 201px short of the deepest. Capped at three, 1400
+   and 1600 give 387px and 445px chips and a 27.00px minimum figure. */
+.chips { columns: 3 260px; column-gap: 36px; }
 /* The query container is the chip, so a value sized against it stays inside its
    own column however many columns the strip is set in. */
 .chip {
