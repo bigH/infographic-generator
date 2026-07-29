@@ -2,10 +2,10 @@
 
 ``process_flow`` and ``ranked_list`` owe their callers everything ``stat_grid``
 already owes them -- a self-contained, escaped, attributed document that renders
-every fact and every section it is handed -- plus two things it does not: a
-coherent text-only page when there is no image for a slot, and a completed render
-when an asset's bytes cannot be read. The parsing helpers and hostile payloads are
-reused from :mod:`tests.test_composition` so both paths are held to one standard.
+every fact and every section it is handed -- plus one thing it does not: a
+coherent text-only page when there is no image for a slot. The parsing helpers and
+hostile payloads are reused from :mod:`tests.test_composition` so both paths are
+held to one standard.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def panda_assets(*, hero: bool = True) -> tuple[ImageAsset, ...]:
 
 
 def unreadable_asset(missing: Path) -> ImageAsset:
-    """A ``Path``-backed asset whose bytes will never arrive, uniquely credited."""
+    """A ``Path``-backed asset whose bytes will never arrive."""
     return ImageAsset(
         content=missing,
         mime_type="image/png",
@@ -182,7 +182,7 @@ async def test_every_fact_and_section_is_rendered_as_visible_text(
 
 
 # --------------------------------------------------------------------------- #
-# 3. Graceful image degradation
+# 3. Missing imagery: text-only where there is nothing, loud where there is a fault
 # --------------------------------------------------------------------------- #
 
 
@@ -211,37 +211,15 @@ async def test_new_bodies_cope_with_images_but_no_hero(template_id: str) -> None
         assert to_data_uri(asset) in embedded, "a supplied asset went unused"
 
 
-@pytest.mark.parametrize("template_id", NEW_TEMPLATE_IDS)
-async def test_unreadable_asset_is_skipped_rather_than_failing_the_render(
+@pytest.mark.parametrize("template_id", sorted(RENDERABLE_TEMPLATE_IDS))
+async def test_an_unreadable_asset_raises_oserror_from_every_renderable_body(
     template_id: str, tmp_path: Path
 ) -> None:
-    broken = unreadable_asset(tmp_path / "absent.png")
-    good = panda_assets(hero=False)
+    """No body degrades a read failure into a page that quietly lost an image."""
+    images = (unreadable_asset(tmp_path / "absent.png"), *panda_assets(hero=False))
 
-    html = await render(template_id, images=(broken, *good))
-    parsed = assert_structurally_valid(html)
-
-    assert broken.credit.license not in parsed.rendered_strings, (
-        "an image that was never displayed must not be credited"
-    )
-    assert broken.credit.author is not None
-    assert broken.credit.author not in parsed.rendered_strings
-    assert broken.alt_text not in parsed.rendered_strings
-
-    embedded = set(parsed.fetchable_urls)
-    for asset in good:
-        assert to_data_uri(asset) in embedded, "a readable asset was dropped too"
-        assert asset.credit.license in parsed.text, "a displayed asset lost its credit"
-
-
-async def test_stat_grid_still_propagates_oserror_for_the_same_input(
-    tmp_path: Path,
-) -> None:
-    """The asymmetry is deliberate -- see the note on ``build_page``."""
-    broken = unreadable_asset(tmp_path / "absent.png")
-
-    with pytest.raises(OSError):
-        await HtmlComposer().compose(make_brief(), make_content(), (broken,))
+    with pytest.raises(OSError, match=r"absent\.png"):
+        await render(template_id, images=images)
 
 
 # --------------------------------------------------------------------------- #

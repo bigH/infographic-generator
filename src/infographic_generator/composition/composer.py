@@ -71,8 +71,9 @@ class HtmlComposer:
     ) -> Composition:
         """Build the page.
 
-        Raises ``OSError`` if a ``Path`` asset is unreadable on the default
-        ``stat_grid`` path; the registry bodies skip an unreadable asset instead.
+        Raises ``OSError`` if a ``Path`` asset is unreadable, on every body: a
+        registry layout degrades no more gracefully than the default one, because
+        an image dropped for a read failure is not credited either.
         """
         page = (
             build_page(brief, content, images)

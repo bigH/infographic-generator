@@ -20,7 +20,6 @@ actually places, never from the assets it was handed.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -42,8 +41,6 @@ from infographic_generator.core.models import (
     Source,
     Theme,
 )
-
-_LOG: Final = logging.getLogger(__name__)
 
 FONT_DIR: Final = Path(__file__).resolve().parent / "fonts"
 
@@ -276,13 +273,13 @@ def build_page(
 ) -> Page:
     """Assemble the stat-grid view model. Raises ``OSError`` for an unreadable asset.
 
-    Deliberately *not* degrading, unlike the two builders below: this is the
-    default composer's path and ``core.ports.Composer`` documents ``OSError`` for
-    an unreadable ``Path`` asset, which ``test_missing_path_backed_asset_raises_
-    oserror`` pins. The newer bodies skip what they cannot read because a layout
-    chosen for a *shape* should not lose the whole page to one bad file. If you
-    are here to make the two consistent: that is a contract change, not a
-    cleanup, and it belongs in a conversation about ``ports.py``.
+    All three bodies do; they did not always. ``process_flow`` and ``ranked_list``
+    shipped dropping what they could not read, and that docstring asked for a
+    ``ports.py`` conversation before anyone made the two consistent. It happened:
+    ``core.ports.Composer`` already documents ``OSError`` for an unreadable
+    ``Path`` asset, so the two newer bodies were changed to match and ``ports.py``
+    was not. A dropped image is not credited either, which made the quiet path a
+    silent success rather than a graceful one.
 
     Only the assets this body places are encoded, so an unreadable asset past the
     band's capacity costs nothing and raises nothing -- the page never shows it.
@@ -301,7 +298,7 @@ def build_process_flow_page(
     brief: Brief, content: ResearchContent, images: Sequence[ImageAsset]
 ) -> Page:
     """Sections become numbered steps, in the order the researcher gave them."""
-    hero, rest = _readable_figures(images)
+    hero, rest = _all_figures(images)
     body = ProcessFlowBody(
         hero=hero,
         steps=tuple(
@@ -320,7 +317,7 @@ def build_ranked_list_page(
     brief: Brief, content: ResearchContent, images: Sequence[ImageAsset]
 ) -> Page:
     """List order *is* the ranking -- ``ports.py`` already guarantees fact order."""
-    hero, rest = _readable_figures(images)
+    hero, rest = _all_figures(images)
     body = RankedListBody(
         hero=hero,
         ranks=tuple(
@@ -386,10 +383,10 @@ def _credits_of(body: PageBody) -> tuple[Credit, ...]:
 
     Attribution has to track what is *displayed*: crediting an image nobody can
     see is noise, and the same derivation is what guarantees a displayed one is
-    never missed. An asset the body did not place was never encoded either -- a
-    figure the builder dropped as unreadable, or one past the band's capacity --
-    so it is neither shown nor credited. A credit with nothing in it is dropped
-    too, rather than drawing a ruled row that says nothing.
+    never missed. An asset the body did not place was never encoded either -- one
+    past the band's capacity -- so it is neither shown nor credited. A credit with
+    nothing in it is dropped too, rather than drawing a ruled row that says
+    nothing.
 
     Nothing stops the imagery stage handing the same photograph over twice, and
     two byte-identical ruled rows read as a bug. So the key is the whole
@@ -428,42 +425,6 @@ def _figures_of(body: PageBody) -> tuple[Figure, ...]:
             return (*lead, *body.figures)
         case unreachable:
             assert_never(unreachable)
-
-
-def _readable_figures(
-    images: Sequence[ImageAsset],
-) -> tuple[Figure | None, tuple[Figure, ...]]:
-    """Encode what we can and drop what we cannot, then split off the hero.
-
-    An asset whose bytes will not come back is *skipped*, never substituted: a
-    placeholder would be a claim about content we do not have, and an image the
-    page never shows must not appear in the colophon either. Both "no images at
-    all" and "no hero among them" come back as ``None`` for the hero slot, which
-    is the template's cue to lay out text only.
-
-    Unlike :func:`_imagery` these bodies place every readable asset, so there is
-    nothing to be gained by deferring the encode: it is the encode itself that
-    tells us whether the asset is readable.
-    """
-    figures: list[Figure] = []
-    readable: list[ImageAsset] = []
-    for asset in images:
-        try:
-            figure = _figure(asset)
-        except OSError as error:
-            _LOG.warning(
-                "skipping unreadable %s asset in role %s: %s",
-                asset.mime_type,
-                asset.role,
-                error,
-            )
-            continue
-        figures.append(figure)
-        readable.append(asset)
-    lead = _hero_index(readable)
-    if lead is None:
-        return None, ()
-    return figures[lead], tuple(f for i, f in enumerate(figures) if i != lead)
 
 
 # --------------------------------------------------------------------------- #
@@ -690,12 +651,31 @@ def _imagery(
     return _figure(lead), tuple(map(_figure, rest[:_BAND_CAPACITY]))
 
 
+def _all_figures(
+    images: Sequence[ImageAsset],
+) -> tuple[Figure | None, tuple[Figure, ...]]:
+    """Embed every asset given, hero first. Raises ``OSError`` for an unreadable one.
+
+    These bodies place everything they are handed, so there is nothing to choose
+    and nothing to defer -- unlike :func:`_imagery`, no asset goes unencoded. A
+    ``Path`` whose bytes will not come back fails the page rather than vanishing
+    from it: a dropped image is not credited either, so the quiet version loses a
+    licensed image with nothing in the colophon to say so. Both "no images at all"
+    and "no hero among them" come back as ``None`` for the hero slot, the
+    template's cue to lay out text only.
+    """
+    lead, rest = _split_hero(images)
+    if lead is None:
+        return None, ()
+    return _figure(lead), tuple(map(_figure, rest))
+
+
 def _hero_index(images: Sequence[ImageAsset]) -> int | None:
     """Lead with the first ``HERO`` asset, else the first asset given.
 
-    The rule lives here rather than in either caller because ``_imagery`` splits
-    assets and ``_readable_figures`` splits the figures encoded from them, and the
-    two must agree on which one leads.
+    ``None`` only when there is nothing to lead with. The rule lives here rather
+    than inline in :func:`_split_hero` because it is a layout decision, not a
+    slicing detail.
     """
     if not images:
         return None
