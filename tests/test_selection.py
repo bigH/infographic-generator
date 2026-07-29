@@ -5,13 +5,18 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import math
+import re
 from collections.abc import Iterator, Sequence
+from types import MappingProxyType
 
 import pytest
 
+from infographic_generator.composition.composer import TEMPLATE_DIR, build_environment
+from infographic_generator.composition.layout import _BUILDERS
 from infographic_generator.composition.registry import (
     RENDERABLE_TEMPLATE_IDS,
     TEMPLATE_REGISTRY,
+    _SPECS,
     TemplateSpec,
 )
 from infographic_generator.composition.selection import (
@@ -50,6 +55,11 @@ EXPECTED_IDS = (
 )
 BLOCKED_IDS = frozenset({"timeline", "comparison", "quote_spotlight"})
 RENDERABLE_IDS = frozenset({"stat_grid", "process_flow", "ranked_list"})
+
+CORE_NAME = re.compile(r"`([A-Z][A-Za-z0-9]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
+"""A backtick-quoted core type or attribute -- ``Quote``, ``Fact.when``. Anchored
+on the opening backtick only, because the real notes quote an annotation too
+(```Fact.when: str | None```)."""
 
 
 def census(
@@ -138,9 +148,11 @@ def test_every_display_name_is_non_empty() -> None:
 
 
 @pytest.mark.parametrize("template_id", sorted(BLOCKED_IDS))
-def test_blocked_entries_explain_the_missing_core_field(template_id: str) -> None:
+def test_a_blocked_template_names_the_core_field_it_waits_on(template_id: str) -> None:
     blocked_on = TEMPLATE_REGISTRY[template_id].blocked_on
     assert blocked_on is not None and blocked_on.strip()
+    assert CORE_NAME.search(blocked_on), f"{template_id} names no core type: {blocked_on}"
+    assert template_id not in RENDERABLE_TEMPLATE_IDS
 
 
 @pytest.mark.parametrize("template_id", sorted(RENDERABLE_IDS))
@@ -162,9 +174,31 @@ def test_icon_and_background_roles_are_claimed_by_the_new_layouts() -> None:
     assert ImageRole.BACKGROUND in TEMPLATE_REGISTRY["quote_spotlight"].image_roles
 
 
-def test_registry_mapping_rejects_assignment() -> None:
+def test_the_registry_is_unique_and_immutable() -> None:
+    ids = [spec.id for spec in _SPECS]
+    assert len(ids) == len(set(ids)), f"duplicate ids in _SPECS: {sorted(ids)}"
+    assert isinstance(TEMPLATE_REGISTRY, MappingProxyType)
     with pytest.raises(TypeError):
         TEMPLATE_REGISTRY["stat_grid"] = TEMPLATE_REGISTRY["ranked_list"]  # type: ignore[index]
+
+
+@pytest.mark.parametrize("template_id", sorted(RENDERABLE_TEMPLATE_IDS))
+def test_every_renderable_template_has_a_template_file_that_parses(
+    template_id: str,
+) -> None:
+    """``blocked_on`` is all that stands between the registry and a runtime
+    ``TemplateNotFound``; this is the check that makes it a guarantee."""
+    name = TEMPLATE_REGISTRY[template_id].template_name
+    assert (TEMPLATE_DIR / name).is_file(), f"{template_id} points at a missing {name}"
+    build_environment().get_template(name)
+
+
+def test_the_builder_table_covers_exactly_the_renderable_templates() -> None:
+    builders, renderable = set(_BUILDERS), set(RENDERABLE_TEMPLATE_IDS)
+    assert builders == renderable, (
+        f"renderable with no builder: {sorted(renderable - builders)}; "
+        f"builders for nothing renderable: {sorted(builders - renderable)}"
+    )
 
 
 def test_template_spec_is_frozen() -> None:

@@ -29,6 +29,19 @@ TEMPLATE_NAME: Final = "stat_grid.html.j2"
 works. It extends ``_base.html.j2``, which is chrome only and not renderable."""
 
 
+def build_environment() -> Environment:
+    """The one Jinja environment. ``autoescape=True`` is not Jinja's default and
+    every string arriving here is untrusted web text."""
+    return Environment(
+        loader=FileSystemLoader(TEMPLATE_DIR),
+        autoescape=True,
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=True,
+    )
+
+
 class HtmlComposer:
     """Lays a brief's content out as a tall portrait infographic page."""
 
@@ -45,14 +58,7 @@ class HtmlComposer:
         alone stays the raw escape hatch and always gets a ``stat_grid`` body, so
         pass it only for a template that reads that shape.
         """
-        self._environment = Environment(
-            loader=FileSystemLoader(TEMPLATE_DIR),
-            autoescape=True,
-            undefined=StrictUndefined,
-            trim_blocks=True,
-            lstrip_blocks=True,
-            keep_trailing_newline=True,
-        )
+        self._environment = build_environment()
         spec = None if template_id is None else TEMPLATE_REGISTRY.get(template_id)
         renderable = spec if spec is not None and spec.blocked_on is None else None
         self._template_id = template_id

@@ -34,7 +34,9 @@ class TemplateSpec:
     template_name: str
     """Filename under ``composition/templates/``."""
     image_roles: Sequence[ImageRole] = ()
-    """Roles this layout has somewhere to put; assets in other roles are surplus."""
+    """Roles this layout is designed around. Advisory only: it is read in one
+    place, ``agent_composer``'s selection prompt, and no builder filters on it --
+    every readable asset is placed whatever role it carries."""
     blocked_on: str | None = None
     """``None`` means renderable. Otherwise: why it is not, naming the missing
     core field. Never dispatch to a spec with this set."""
