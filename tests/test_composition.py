@@ -125,8 +125,12 @@ HARVESTABLE_URL_PAYLOADS = (
     HOSTILE_HOST_PAYLOAD,
     UNTITLED_SOURCE_URL,
 )
-"""All seven reachable shapes, the length attack above included -- it is a URL payload
-too, and a loop that has to enumerate them should not have to remember it separately."""
+"""All eight reachable shapes, the length attack above included -- it is a URL payload
+too, and a loop that has to enumerate them should not have to remember it separately.
+
+The count is pinned by
+:func:`test_every_payload_and_sink_table_still_has_cells_to_run`, because emptying this
+tuple skips 21 cells rather than failing one."""
 
 UNESCAPED_MARKUP_CHARS = frozenset("<>\"'")
 """The characters a payload cannot keep verbatim in the document without having
@@ -1819,6 +1823,54 @@ async def test_credits_differing_in_one_field_are_two_obligations(
                 f"{obligation!r} is not rendered anywhere in the colophon, so one of "
                 f"the two {case.field}-distinct uses is legally unattributed"
             )
+
+
+def test_every_payload_and_sink_table_still_has_cells_to_run() -> None:
+    """The three hand-written parametrize axes in this file, pinned against emptiness.
+
+    An emptied axis is not a failure. pytest reports ``got empty parameter set`` as a
+    *skip*, so the cells do not run, the suite stays green, and the only evidence is a
+    collected count nobody reads. Measured on a throwaway copy of this file: emptying
+    ``HARVESTABLE_URL_PAYLOADS`` takes 21 cells with it, ``DISTINCT_OBLIGATIONS`` four,
+    and ``GEOMETRY_SINKS`` two -- and the ``GEOMETRY_SINKS`` sabotage is the one that
+    turned two *already failing* cells green, which is the whole shape of this defect
+    class. It is the tenth instance of it in this zone, after ``set(()) <= anything``.
+
+    Placed here rather than beside each table because it needs all three defined above
+    it, and pinned by *content* rather than by length: a count alone goes stale silently
+    when a case is swapped rather than added, and both remaining tables name a thing --
+    a geometry field, a credit field -- so the pin can say which one went missing.
+    ``TEMPLATE_IDS`` and ``THEMES`` are fenced separately, by
+    :func:`test_the_matrix_covers_every_body_and_every_theme`, because they are derived
+    from the registry and from ``Theme`` rather than written out here.
+    """
+    assert len(HARVESTABLE_URL_PAYLOADS) == 8, (
+        f"HARVESTABLE_URL_PAYLOADS holds {len(HARVESTABLE_URL_PAYLOADS)} payloads, not "
+        "the 8 reachable URL shapes it was written for; emptied, all 21 sanitisation "
+        "cells skip rather than fail"
+    )
+    assert len(set(HARVESTABLE_URL_PAYLOADS)) == len(HARVESTABLE_URL_PAYLOADS), (
+        "two URL payloads are the same string, so one shape is measured twice and "
+        "another is measured not at all"
+    )
+    assert {field for field, _, _ in GEOMETRY_SINKS} == {"width_px", "height_px"}, (
+        f"GEOMETRY_SINKS covers {GEOMETRY_IDS}, not both geometry fields of "
+        "RenderOptions; emptied, every cell proving a hostile page dimension is refused "
+        "before it reaches CSS skips instead of failing -- and a skip there reads "
+        "identically to a fix"
+    )
+    assert {case.field for case in DISTINCT_OBLIGATIONS} == {
+        "author",
+        "license_url",
+        "work",
+        "source_url",
+        "modified",
+    }, (
+        f"DISTINCT_OBLIGATIONS covers {[case.field for case in DISTINCT_OBLIGATIONS]}, "
+        "not the five fields _credits_of keys on; an attribution field with no case "
+        "here may be collapsed away, and this is the half of de-duplication with legal "
+        "consequences"
+    )
 
 
 def _obligations_of(credit: ImageCredit) -> tuple[str, ...]:

@@ -366,7 +366,32 @@ def test_unknown_and_blocked_ids_fall_back_to_stat_grid_without_raising(
 
 
 def test_the_blocked_ids_under_test_are_actually_registered_and_blocked() -> None:
-    """Guards the test above against silently testing nothing."""
+    """Guards the tests above against silently testing nothing.
+
+    Walking the tuple is not a pin: emptied, this loop runs zero times and passes,
+    while the two dispatch axes it guards keep only their literal ids and stop
+    covering a blocked template at all -- six cells that vanish into pytest's
+    ``got empty parameter set`` skip, green and silent. So the tuple is pinned by
+    equality first, and derived from the registry rather than transcribed, which
+    also means unblocking a template fails here exactly once, by name.
+    """
+    blocked_in_registry = set(TEMPLATE_REGISTRY) - RENDERABLE_TEMPLATE_IDS
+    assert set(BLOCKED_TEMPLATE_IDS) == blocked_in_registry, (
+        f"BLOCKED_TEMPLATE_IDS is {list(BLOCKED_TEMPLATE_IDS)} but the registry blocks "
+        f"{sorted(blocked_in_registry)}: untested "
+        f"{sorted(blocked_in_registry - set(BLOCKED_TEMPLATE_IDS))}, stale "
+        f"{sorted(set(BLOCKED_TEMPLATE_IDS) - blocked_in_registry)}. Emptied, the two "
+        "fall-back axes above quietly stop testing a blocked id and this loop stops "
+        "running; a template that just became renderable belongs in NEW_TEMPLATE_IDS "
+        "with measured box floors instead"
+    )
+    assert len(BLOCKED_TEMPLATE_IDS) == len(set(BLOCKED_TEMPLATE_IDS)), (
+        f"BLOCKED_TEMPLATE_IDS repeats an id: {list(BLOCKED_TEMPLATE_IDS)}"
+    )
+    assert RENDERABLE_TEMPLATE_IDS, (
+        "no template is renderable, so the axis over sorted(RENDERABLE_TEMPLATE_IDS) "
+        "above collapses to an empty parameter set and skips instead of failing"
+    )
     for template_id in BLOCKED_TEMPLATE_IDS:
         spec = TEMPLATE_REGISTRY[template_id]
         assert spec.blocked_on is not None

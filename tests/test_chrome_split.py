@@ -147,6 +147,34 @@ def test_the_one_environment_still_autoescapes_strictly() -> None:
         assert setting in source, f"the environment lost {setting}"
 
 
+def test_the_bypass_axis_still_names_every_spelling_it_was_written_for() -> None:
+    """The axis below is pinned by content, because an emptied one is a silent pass.
+
+    ``ESCAPE_BYPASSES`` feeds the only parametrized fence in this module, and the
+    non-vacuity checks that keep it honest -- the file-count floor and the
+    three-name membership -- live *inside* the cell. Empty the tuple and they go
+    with it: pytest reports ``got empty parameter set``, the suite stays green, and
+    ``|safe`` is unguarded across the whole of ``src/``.
+
+    The expectation is transcribed rather than derived on purpose. There is no
+    source of truth for "ways to turn autoescaping off" other than Jinja2's own
+    vocabulary, and reading it out of the code under test is how a fence learns to
+    agree with the bug.
+    """
+    assert set(ESCAPE_BYPASSES) == {
+        "|safe",
+        "| safe",
+        "Markup",
+        "autoescape false",
+        "autoescape False",
+    }, (
+        f"ESCAPE_BYPASSES is now {list(ESCAPE_BYPASSES)}. Emptied, the fence below "
+        "scans nothing and skips; narrowed, the spelling that was dropped is free to "
+        "appear anywhere under src/ -- and every assertion that would have caught it "
+        "is inside the cell that no longer runs"
+    )
+
+
 @pytest.mark.parametrize("bypass", ESCAPE_BYPASSES)
 def test_no_escape_bypass_anywhere_under_src(bypass: str) -> None:
     scanned = (*python_sources(), *template_sources())
