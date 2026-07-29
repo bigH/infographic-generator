@@ -363,8 +363,14 @@ def build_page_for(
 
 
 def build_chrome(brief: Brief, content: ResearchContent, body: PageBody) -> PageChrome:
-    """The furniture every layout shares, plus credits for what ``body`` displays."""
+    """The furniture every layout shares, plus credits for what ``body`` displays.
+
+    Raises ``TypeError`` if the brief's page geometry is not made of integers --
+    see :func:`_css_px`, which is where the render options stop being caller data
+    and become CSS lengths.
+    """
     title = _page_title(brief, content)
+    width_px = _css_px(brief.options.width_px, "width_px")
     return PageChrome(
         lang=_bcp47(brief.locale),
         direction=_direction(brief.locale),
@@ -377,10 +383,53 @@ def build_chrome(brief: Brief, content: ResearchContent, body: PageBody) -> Page
         summary=_legible_text(content.summary),
         references=_references(content),
         credits=_credits_of(body),
-        width_px=brief.options.width_px,
-        gutter_px=_gutter(brief.options.width_px),
-        min_height_px=brief.options.height_px,
+        width_px=width_px,
+        gutter_px=_gutter(width_px),
+        min_height_px=_css_px_or_none(brief.options.height_px, "height_px"),
     )
+
+
+def _css_px(value: object, field: str) -> int:
+    """The one door a caller-supplied pixel count walks through on its way into CSS.
+
+    ``RenderOptions.width_px`` and ``height_px`` are annotated ``int`` and validated
+    nowhere -- ``core/`` is pure data by design -- and Python does not enforce an
+    annotation, so nothing stops ``RenderOptions(height_px="auto} body{display:none}
+    /*")``. Both values are interpolated into ``<style>`` as CSS lengths, and
+    ``autoescape=True`` is HTML-only, so a string arriving there closes the rule and
+    the rest of the sheet belongs to whoever supplied it. Measured before this
+    check existed: that exact value rendered ``body { min-height: auto}
+    body{display:none} /*px; }``. These two are the only values in this package that
+    reach CSS straight from a caller; every other length in the sheets and in the
+    ``style=""`` attributes is a number computed here.
+
+    ``TypeError`` rather than the ``ValueError`` ``int(value)`` would raise, because
+    the fault is a type and not a value: the annotation says ``int`` and the caller
+    passed something that is not one. It also names the field, which the
+    interpreter's own message does not -- a hostile ``width_px`` used to die one
+    frame down in :func:`_gutter` as "can't multiply sequence by non-int of type
+    'float'", which mentions neither ``RenderOptions`` nor the page width.
+    ``int(value)`` would additionally accept ``"1200"`` and truncate ``1200.9``,
+    normalising one programming error while exploding on another; the contract is
+    ``int``, so the check is "is an int". No fallback and no clamp: a caller asking
+    for a nonsense page size hears about it rather than receiving a plausible PNG
+    that is not the one they asked for.
+
+    ``bool`` is refused despite being an ``int`` subclass, because it is the one that
+    does not render as a number: ``width_px=True`` would emit ``--w: Truepx``.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"RenderOptions.{field} must be an int, not "
+            f"{type(value).__name__} ({value!r}); it is interpolated into the "
+            "stylesheet as a CSS length, which nothing downstream escapes"
+        )
+    return value
+
+
+def _css_px_or_none(value: object, field: str) -> int | None:
+    """The same, for the height a caller is allowed to omit entirely."""
+    return None if value is None else _css_px(value, field)
 
 
 def _credits_of(body: PageBody) -> tuple[Credit, ...]:

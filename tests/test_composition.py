@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 import pytest
 import pytest_asyncio
@@ -1243,6 +1243,185 @@ async def test_render_options_are_copied_into_the_composition(
     assert composition.width_px == options.width_px
     assert composition.height_px == options.height_px
     assert composition.device_scale_factor == options.device_scale_factor
+
+
+# The render options are also the only caller-supplied values in this pipeline that
+# land in CSS. ``tests/test_css_injection.py`` plants CSS-shaped payloads in every
+# untrusted *content* string -- research text, image credits, the prompt -- and its
+# strongest fence states outright that the stylesheet is "a function of
+# ``(template_id, width_px, height_px)`` and nothing else", so those three are the
+# axes it holds fixed rather than attacks. Its payload alphabet and fixtures never
+# touch a numeric field: ``hostile_cell`` sets only ``theme``.
+#
+# What the two fences below add is the attack through the typed numeric fields
+# themselves. ``RenderOptions.width_px`` and ``height_px`` are annotated ``int`` and
+# validated nowhere -- ``core/`` is deliberately pure data -- and Python does not
+# enforce an annotation, so a caller can put a string in either and it flows into
+# ``<style>`` as a CSS length. ``autoescape=True`` is HTML-only.
+
+CSS_LENGTH_PAYLOAD: Final = "auto} body{display:none} /*"
+"""A hostile *pixel count*: a plausible CSS keyword, then a rule close, then a rule
+of the attacker's, then an open comment to swallow the ``px;`` the template appends.
+
+Contains none of ``<>&"'``, so markupsafe has nothing to escape and its absence from
+a stylesheet cannot be credited to autoescape. Measured against ``height_px`` before
+the coercion existed, it rendered ``body { min-height: auto} body{display:none} /*px;
+}`` inside the one inline sheet."""
+
+CSS_LENGTH_SIGNATURES: Final = ("auto}", "body{display:none}")
+"""The smallest fragments of the payload that are already a CSS escape.
+
+Fragments rather than the whole string because a value interpolated mid-declaration
+can leak the dangerous half of a payload without reproducing it end to end."""
+
+GEOMETRY_SINKS: Final = (
+    ("width_px", 917, "--w: 917px"),
+    ("height_px", 4321, "min-height: 4321px"),
+)
+"""``(field, a benign value, the declaration that value writes into the sheet)``.
+
+The third element is what keeps the fences below from measuring nothing: each one
+asserts its field's number is *present* in the stylesheet before asserting anything
+about a payload's absence from it. Delete the interpolation site and the fence fails
+rather than passing for free."""
+
+GEOMETRY_IDS: Final = tuple(field for field, _, _ in GEOMETRY_SINKS)
+
+GEOMETRIES = pytest.mark.parametrize(
+    ("field", "benign", "declaration"), GEOMETRY_SINKS, ids=GEOMETRY_IDS
+)
+GEOMETRY_FIELDS = pytest.mark.parametrize("field", GEOMETRY_IDS)
+"""The same axis for the fence that needs only the field name, so it does not have
+to accept two arguments it never reads."""
+
+MIN_STYLESHEET_BLOCKS: Final = 60
+"""Rule blocks a whole sheet clears, counted by opening brace.
+
+Independently the same floor as ``test_css_injection.MIN_DECLARATION_BLOCKS``, and
+duplicated rather than imported because the import runs the other way: that module
+reads its fixtures from this one, so this one cannot read a constant back out of it.
+TODO: move the constant and its ``declaration_blocks`` helper down here, into the
+shared fixture library, and have ``test_css_injection`` import them.
+
+``HtmlComposer()`` composes ``stat_grid``, measured at 80 blocks; chrome alone is 44,
+so the floor is clear of a page that lost its body sheet entirely."""
+
+
+def geometry(field: str, value: object) -> RenderOptions:
+    """``RenderOptions`` with one geometry field set to ``value``, ``int`` or not.
+
+    The ``cast`` is the point of the exercise rather than a shortcut around it: the
+    annotation says ``int``, nothing enforces it, and a caller who gets this wrong is
+    exactly the caller these fences describe.
+    """
+    match field:
+        case "width_px":
+            return RenderOptions(width_px=cast(int, value))
+        case "height_px":
+            return RenderOptions(height_px=cast(int, value))
+        case _:
+            # Guards the table above against a typo: a misspelt field would
+            # otherwise compose at the defaults and quietly pass.
+            raise AssertionError(f"{field!r} is not a geometry field of RenderOptions")
+
+
+async def geometry_stylesheet(field: str, value: object) -> str:
+    """The inline stylesheet of a page composed at one geometry, payloads elided.
+
+    Comments go too, because ``_chrome.css`` is full of prose that names the very
+    properties these fences search for.
+    """
+    composition = await HtmlComposer().compose(
+        make_brief(options=geometry(field, value)), make_content(), ()
+    )
+    return css_declarations(parse(composition.html).css)
+
+
+@GEOMETRIES
+async def test_a_page_dimension_really_does_reach_the_stylesheet(
+    field: str, benign: int, declaration: str
+) -> None:
+    """The premise the fence below rests on, asserted as a presence.
+
+    An absence measured in an empty string is free, so before claiming a payload
+    stays out of the sheet this establishes that there is a sheet, that it is a whole
+    one, and that this particular field is genuinely interpolated into it. It also
+    fences the signatures: neither may occur in a benign sheet, or a hit could not
+    tell a leak from the sheet's own text.
+    """
+    css = await geometry_stylesheet(field, benign)
+    blocks = css.count("{")
+
+    assert blocks >= MIN_STYLESHEET_BLOCKS, (
+        f"the <style> element holds {blocks} declaration blocks, under the "
+        f"{MIN_STYLESHEET_BLOCKS} a whole sheet clears; there is not enough CSS here "
+        f"for {field} to leak into, so the fence over it would assert the absence of "
+        f"a stylesheet. Sheet begins {elide(css)!r}"
+    )
+    assert declaration in css, (
+        f"RenderOptions.{field}={benign} does not write {declaration!r} into the "
+        f"stylesheet, so it no longer reaches CSS by this route and the fence over it "
+        f"is measuring a sink that moved. Sheet begins {elide(css)!r}"
+    )
+    collisions = [sig for sig in CSS_LENGTH_SIGNATURES if sig in css]
+    assert not collisions, (
+        f"payload signatures {collisions} already occur in a benign sheet, so they "
+        "cannot distinguish a leak from the stylesheet's own text"
+    )
+
+
+async def refusal_message(field: str) -> str:
+    """Compose with the payload in ``field`` and return the ``TypeError`` it raised.
+
+    Fails the calling test -- quoting the sheet -- when the compose *succeeds*,
+    because there are only two ways it can: the payload became a CSS length, or it
+    was silently clamped or defaulted into a plausible one. A ``pytest.raises`` here
+    would report a bare "DID NOT RAISE" and throw that evidence away, and the leaked
+    stylesheet is precisely what someone who just deleted the coercion needs to read.
+    """
+    try:
+        css = await geometry_stylesheet(field, CSS_LENGTH_PAYLOAD)
+    except TypeError as error:
+        return str(error)
+    leaked = [signature for signature in CSS_LENGTH_SIGNATURES if signature in css]
+    found = min((css.find(signature) for signature in leaked), default=0)
+    pytest.fail(
+        f"RenderOptions.{field}={CSS_LENGTH_PAYLOAD!r} composed without error. "
+        f"Signatures reaching the <style> element: {leaked}, around "
+        f"{css[max(0, found - 70) : found + 90]!r}. Autoescape is HTML-only, so "
+        "nothing downstream escapes a CSS length. An empty signature list here "
+        "instead means the value was quietly clamped or defaulted, which is the "
+        "other outcome the coercion refuses: the caller would get a plausible PNG "
+        "that is not the one they asked for."
+    )
+
+
+@GEOMETRY_FIELDS
+async def test_a_hostile_page_dimension_is_refused_before_it_reaches_css(
+    field: str,
+) -> None:
+    """A string where a pixel count belongs must fail the compose, loudly and by name.
+
+    Refusal is the assertion because it is strictly stronger than an absence: there
+    is no ``Composition`` and therefore no ``<style>`` element for the payload to be
+    in, while the test above has already proved this field does reach a real one.
+
+    The message is matched, not merely the exception class. Both fields raised
+    ``TypeError`` before the coercion existed, but only one of them for a reason
+    anybody chose: a hostile ``width_px`` died inside ``_gutter`` as "can't multiply
+    sequence by non-int of type 'float'" -- accidental protection that names neither
+    ``RenderOptions`` nor the page width -- while a hostile ``height_px`` sailed
+    straight through into the sheet. A bare ``pytest.raises(TypeError)`` would have
+    been green on the first field for a reason nobody chose, which is exactly the
+    kind of pass this fence exists to refuse.
+    """
+    message = await refusal_message(field)
+
+    assert re.search(rf"RenderOptions\.{field} must be an int", message), (
+        f"RenderOptions.{field} was refused, but not by the boundary coercion in "
+        f"layout.py: {message!r}. Some other frame raised first, so this cell says "
+        "nothing about whether a string can reach CSS as a page dimension"
+    )
 
 
 # --------------------------------------------------------------------------- #
