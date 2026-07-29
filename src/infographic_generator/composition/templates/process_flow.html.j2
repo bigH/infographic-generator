@@ -44,7 +44,9 @@
 {% endif %}
 
 {% if page.body.facts %}
-<section class="strip on-ink gutter">
+{#- No `on-ink`: the strip is paper-backed, so its ticks take the paper accent and
+    the paper dim. See the area-ratio note in `css/process_flow.css`. -#}
+<section class="strip gutter">
   <p class="strip__label tick">By the numbers</p>
   <div class="chips">
     {% for stat in page.body.facts %}

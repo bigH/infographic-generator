@@ -1,8 +1,14 @@
 {#-
   The ranked-list body's own stylesheet. Display type picks a rung off the shared
   --s0..--s7 ramp rather than inventing a px value, and the value on the trailing
-  edge is `.fitted`: capped both by the rung its length earns and by what its own
+  edge is `.fitted`: capped both by the rung its *rank* earns and by what its own
   column can hold, so a long value shrinks instead of wrapping or overflowing.
+
+  Rank is the only thing that sizes a figure here, unlike the ledger, where every
+  statistic is independent and length is the right ceiling. Both halves of
+  `min(--size, --fit)` therefore descend with the ordinal -- see
+  `layout._RANK_LADDER` and `layout._descending_caps` -- which is what makes the
+  column non-increasing by construction rather than by luck.
 -#}
 /* --- hero (punched into the masthead) -------------------------------- */
 .hero { position: relative; overflow: hidden; }
@@ -24,14 +30,37 @@
 }
 
 /* --- the ranking ---------------------------------------------------- */
+/* The row's furniture is a *share* of the row, not a pixel count. Both
+   percentages resolve against `.rank`'s own content box -- that is what a
+   percentage flex-basis and a percentage `gap` are both defined against -- so this
+   needs no media query and no container query.
+
+   A pixel count here was regressive, and steeply: 64px of gutter plus two 24px
+   gaps is 112px whatever the page, which is 19.86% of the 564px row at 640px and
+   10.61% of the 1056px row at 1200px. The narrow page, the one with nothing to
+   spare, paid double. Measured after: 14.20% / 12.90% / 12.90% at 640 / 1000 /
+   1200 -- flat above the floor, and 5.66pp of the 640px row handed back to the two
+   columns that carry content.
+
+   The floor is what the ordinal's own glyphs need, measured in chromium against
+   the embedded mono face at both rungs it is set at: a digit is 0.6em plus 0.04em
+   of letter-spacing, so `10` sets to 34.56px at `--s0` (27px) and 42.25px at
+   `--s1` (33px), which is the rung `.rank--lead` gives it. 44px clears the wider
+   of the two by 1.75px and never wraps a two-digit ordinal. 6.5% only reaches 44px
+   at a 677px page, so 640px is the one width of the three that sits on the floor.
+
+   Past two digits the basis stops being the answer and does not have to be: with
+   `flex-shrink: 0` the box cannot go under min-content, so a hundredth rank measures
+   51.84px at `--s0` and 63.38px at `--s1` and widens the gutter for that one row
+   rather than breaking its number across lines. */
 .ranks {
-  --rank-gutter: 64px;
+  --rank-gutter: max(44px, 6.5%);
   padding-block: 6px 0;
 }
 .rank {
   display: flex;
   align-items: baseline;
-  gap: 24px;
+  gap: 3.2%;
   border-top: 1px solid var(--rule-paper);
   padding-block: 15px 20px;
 }
@@ -53,9 +82,13 @@
    there (`conservation`, `population`, `fragmentation` all break and render the
    hyphen) but it offers no opportunity for a *capitalized* word -- `Conservation`,
    `Population`, `Vulnerable`, `National` all decline. Labels lead with a capital,
-   so this cannot save the leading word; `.rank__figure`'s 37.5% basis is what
-   keeps the column wide enough for it. What this earns is the long lowercase word
-   further into a label. */
+   so this cannot save the leading word; `.rank__figure`'s 43% basis is what leaves
+   the column wide enough for it. What this earns is the long lowercase word
+   further into a label: `Bamboo metric 00`, the fixtures' own lead label, sets as
+   `Bamboo met-` / `ric 00` at 640px with the hyphen glyph painted at x=348.4 on the
+   first line. That reads as a mid-word chop in a per-character line map, because
+   the hyphen shares its client rect with the characters either side of it -- it is
+   this declaration working, not `overflow-wrap` below it. */
 .rank__label {
   font-family: var(--display);
   font-weight: 700;
@@ -79,54 +112,73 @@
    measured against -- the whole row would be the wrong answer, because the value
    never gets the whole row.
 
-   `0 0`, because a shrinkable basis is not a basis: at 640px, where the row's
-   content box is 564px (640 less two 38px gutters), the real ten-fact content
-   collapsed every row's column to 115.84px -- 20.5% of the row, not the declared
-   34% -- while the seven-fact fixtures hold 34% on every row but the lead, which
-   takes 29.7%. Two content sets, two different collapses, which is the second
-   reason not to tune this against the fixtures. But the shrink was the smaller
-   half of the bug.
-   `1/900th of its mother` is 21 characters, so `_fit` gives it
-   `--fit: 100/(21 x 0.60) = 7.94cqw`, and it needs 16.5/0.0794 = 207.8px --
-   36.85% of the row -- merely to match the 16.5px prose it headlines. 34%
-   renders it at 15.2px whether it shrinks or not.
+   `0 0`, because a shrinkable basis is not a basis: with a growable one the real
+   ten-fact content collapsed every row's column to 115.84px at 640px -- 20.5% of
+   the row against a declared 34% -- while the fixtures collapsed differently
+   again, which is one reason this is not tuned against them.
 
-   The usable band is 0.75pp wide, and the basis sets both of its edges -- the type
-   sets neither. Below 36.85% the figure sinks under body copy and the legibility
-   fence goes red: 36.8% measures 0.999x. Above 37.6% the text column falls under
-   239.5px, which is what `Conservation` sets to at the lead label's 41px rung on
-   the real ten-fact content, and the label chops mid-word: 37.6% leaves 239.9px
-   and holds, 37.7% leaves 239.4px and renders `Conservatio / n status`. (The
-   fixtures' own first label wrap comes later, at 38.1%, which is why they cannot
-   be what this is tuned against.) 37.5% stops one step short of that edge for a
-   whole pixel of margin instead of half of one -- 240.5px of column against
-   239.5px of word -- and pays nothing for it: the figure sets at 16.79px, 1.018x
-   prose. Lower would only trade floor headroom for column nobody needs.
+   43% is the last whole point before the 640px row runs out, and the two edges of
+   the band are set by two different strings. The row's content box is 564px (640 less two 38px
+   gutters) and the furniture above it now takes 80.10px, leaving 483.90px for the
+   label column and this one to divide.
 
-   The row has no slack left, and one more character proves it: a 22-character
-   value earns 100/13.2 = 7.58cqw, which is 16.03px in this 211.5px column, red.
-   Reaching 16.5px would need 217.7px, 38.6% of the row, well past where the label
-   chops. There is no basis that serves both.
+   The upper edge is the label. `Conservation`, the first word of the real content's
+   lead label, sets to 239.48px at `.rank--lead`'s 41px rung and the en dictionary
+   declines to hyphenate a capitalised word, so a column under 239.48px chops it
+   mid-word -- there is nothing else `overflow-wrap: break-word` can do. 43% leaves
+   241.39px of label column, 1.91px clear. Measured one step at a time: 43.2% leaves
+   240.27px and holds, 43.3% leaves 239.70px and holds, 43.5% leaves 238.58px and
+   renders `Conservatio / n status`.
 
-   TODO: the slack is not in the basis. At 640px `.rank__ordinal`'s 64px gutter
-   plus the row's two 24px gaps take 112px -- 19.9% of the row -- before either
-   text column gets anything. Making `--rank-gutter` and `.rank`'s `gap`
-   proportional to the row would hand the value column about 4pp, with no media
-   query and without taking it from the label. */
+   The lower edge is the longest value. `1/900th of its mother` is 21 characters, so
+   `_fit` caps it at 100/(21 x 0.60) = 7.94cqw, and `_descending_caps` hands that
+   same cap to every rank below it. 43% of 564px is 242.52px of column, which sets
+   it at 19.26px -- 1.17x the 16.5px prose it headlines, and the smallest figure
+   anywhere on the real page. Every tenth of a point below 43% takes 0.564px off this
+   column, which is 0.045px of figure size, and hands it to a label column that has
+   nothing to do with it.
+
+   Nothing in this paragraph depends on the page width: both edges are the same
+   share of any row, which is the property the proportional furniture above bought.
+   At 1000px the column measures 378.39px, where that 7.94cqw cap comes to 30.04px
+   and `--s0` becomes the binding term instead; at 1200px it is 454.08px and
+   36.05px. The label column goes to 388.11px and 465.73px, so `Conservation` stops
+   deciding anything above roughly 700px. */
 .rank__figure {
   container-type: inline-size;
-  flex: 0 0 37.5%;
+  flex: 0 0 43%;
   margin-inline-start: auto;
   text-align: end;
 }
+/* Overrides the chrome's `.fitted` -- same specificity, later in the one `<style>`
+   -- to put an absolute floor under the width-derived cap. `--fit` has no floor of
+   its own worth the name: `_MIN_FIT_CQW` stops at 3.00cqw, which in this column is
+   7.28px at 640px, below the 10.5px credit ticks and unreadable in a PNG. One
+   62-character value is all it takes, and `_descending_caps` then hands that cap to
+   every rank beneath it -- so without this the whole column goes with it.
+
+   19px is the largest floor that never wraps a legitimate value, and the arithmetic
+   is closed rather than chosen: the tightest cap the real ten-fact content produces
+   at 640px sets its value at 19.26px, so anything above 19.26 makes `1/900th of its
+   mother` break instead of shrink, and buying room for 20px would need 252px of
+   column -- past where the lead label chops. It is 1.15x the 16.5px prose and 1.81x
+   the 10.5px ticks, and on every content set at every width it is *not* the binding
+   term: it exists for the pathological string, and the `overflow-wrap: break-word`
+   below is what happens when it binds. Measured on the one-fact floor fixture, a
+   60-character value earns the 3.00cqw layout floor, renders at exactly 19px, and
+   wraps to three lines at 640px and two at 1200px with zero overflow of its own box,
+   of the 242.52px column, or past that column's trailing edge. */
 .rank__value {
   font-family: var(--display);
   font-weight: 700;
+  font-size: max(19px, min(var(--size), var(--fit)));
   line-height: 0.96;
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
   font-variant-numeric: lining-nums tabular-nums;
 }
+/* Two rungs apart from `.rank--lead`'s below, which is what makes the ordinal-derived
+   ladder in `layout._RANK_LADDER` render as five sizes off a four-member `Scale`. */
 .value--xl { --size: var(--s3); }
 .value--l  { --size: var(--s2); }
 .value--m  { --size: var(--s1); }

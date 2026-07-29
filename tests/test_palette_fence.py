@@ -90,6 +90,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
+import pytest
 from PIL import Image, ImageColor
 
 from infographic_generator.composition import HtmlComposer
@@ -98,6 +99,7 @@ from infographic_generator.core.models import (
     Composition,
     ImageAsset,
     RenderOptions,
+    ResearchContent,
     Theme,
 )
 from infographic_generator.render import PlaywrightRenderer
@@ -113,6 +115,7 @@ from tests.test_composition import (  # noqa: F401 -- ``chromium`` is a fixture,
     laid_out,
     make_brief,
     make_content,
+    shipped_panda_content,
 )
 
 # ``BODIES``/``IN_BOTH_THEMES``/``THEMES`` are imported rather than rebuilt: they are
@@ -567,16 +570,30 @@ def declared_tokens() -> Mapping[str, ThemedColour]:
 
 
 async def compose_palette_cell(
-    template_id: str, theme: Theme, images: Sequence[ImageAsset] = ()
+    template_id: str,
+    theme: Theme,
+    images: Sequence[ImageAsset] = (),
+    width_px: int = RenderOptions().width_px,
+    content: ResearchContent | None = None,
 ) -> Composition:
     """One body in one theme, at this module's own scale factor.
 
     ``test_composition.compose_cell`` cannot serve here: it takes no scale factor,
     so it always composes at the ``RenderOptions`` default of 2.0.
+
+    ``width_px`` defaults to the same page width every sampled-pixel cell has always
+    used, so the geometry those samples are derived from does not move. It is a
+    parameter because the luminance fence at the foot of this module measures an
+    *aggregate* over the page, and the areas that aggregate is made of are a function
+    of the width.
     """
-    options = RenderOptions(theme=theme, device_scale_factor=DEVICE_SCALE)
+    options = RenderOptions(
+        width_px=width_px, theme=theme, device_scale_factor=DEVICE_SCALE
+    )
     return await HtmlComposer(template_id=template_id).compose(
-        make_brief(options=options), make_content(), images
+        make_brief(options=options),
+        make_content() if content is None else content,
+        images,
     )
 
 
@@ -938,4 +955,161 @@ async def test_the_chrome_resolves_every_palette_token_to_its_declared_value(
         )
         + "\nA `None` means the selector matched nothing, so the value was never "
         "asserted at all."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Which way round the two themes are
+# --------------------------------------------------------------------------- #
+# Every assertion above this line is about one colour in one place. None of them can
+# see the property a reader notices first: whether the dark theme is dark. That is an
+# aggregate over the whole rasterised page, and it is not a colour decision at all --
+# the chrome swaps ``--paper`` and ``--patch`` wholesale between themes, so a body's
+# aggregate luminance follows the *area ratio* of its paper-backed to its
+# patch-backed regions, and nothing else.
+#
+# ``process_flow`` got that ratio backwards and shipped a dark theme brighter than its
+# light one: 96.55 mean luma light against 153.81 dark at 640px, inverted at every
+# width, while ``stat_grid`` and ``ranked_list`` were the right way round. Its fact
+# strip alone was 31.1% of the page and patch-backed, which put the body at 66.5%
+# patch to 24.5% paper. Every token resolved correctly and every sampled pixel matched
+# its declared hex the entire time.
+
+LUMA_WEIGHTS: Final = (0.2126, 0.7152, 0.0722)
+"""Rec. 709 luma coefficients, applied to *gamma-encoded* sRGB bytes.
+
+Deliberately not linearised. This is a perceptual "how bright does the page look"
+number for comparing two renders of the same geometry, not a photometric luminance,
+and the two orderings agree here anyway. Written down as a constant so the formula in
+the fence below is the formula in this docstring."""
+
+LUMA_BANDS: Final = 3
+LUMA_LEVELS: Final = 256
+
+
+def mean_luma_255(image: Image.Image) -> tuple[float, int]:
+    """Mean of ``0.2126R + 0.7152G + 0.0722B`` over every pixel, on a 0-255 scale.
+
+    Returns the mean and the pixel count it was taken over, because a fence that
+    compares two means has to be able to say it looked at some pixels.
+
+    Computed from the three per-channel histograms rather than by walking pixels: it is
+    the same number exactly -- a mean is linear in the counts -- over 4-5 million
+    pixels per render, twelve renders per run. The histograms are also what makes this
+    fail closed: an image whose three bands do not agree on how many pixels they hold
+    is not an RGB image this function can average, and it says so instead of dividing
+    by one of the three.
+    """
+    channels = image.convert("RGB").histogram()
+    assert len(channels) == LUMA_BANDS * LUMA_LEVELS, (
+        f"expected {LUMA_BANDS * LUMA_LEVELS} histogram bins for an RGB image, got "
+        f"{len(channels)} -- this is not the three-band histogram the mean is built on"
+    )
+    bands = [
+        channels[band * LUMA_LEVELS : (band + 1) * LUMA_LEVELS]
+        for band in range(LUMA_BANDS)
+    ]
+    counts = {sum(band) for band in bands}
+    assert len(counts) == 1, (
+        f"the R/G/B histograms hold {sorted(counts)} pixels respectively, which cannot "
+        "come from one image -- the mean below would be divided by the wrong count"
+    )
+    pixels = counts.pop()
+    assert pixels > 0, "the render has no pixels, so its mean luminance is undefined"
+    total = sum(
+        weight * sum(level * count for level, count in enumerate(band))
+        for weight, band in zip(LUMA_WEIGHTS, bands, strict=True)
+    )
+    return total / pixels, pixels
+
+
+@pytest.mark.parametrize("width_px", [1200, 640])
+@BODIES
+@BROWSER_LOOP
+async def test_the_dark_theme_renders_darker_than_the_light_one(
+    chromium: Browser, tmp_path: Path, template_id: str, width_px: int
+) -> None:
+    """For every body, the dark theme's page is darker than the light theme's.
+
+    Mean luminance is ``0.2126R + 0.7152G + 0.0722B`` over the gamma-encoded sRGB
+    bytes of the real ``PlaywrightRenderer`` output -- the deliverable, not a scripted
+    page -- averaged over every pixel of it.
+
+    The claim is only an *ordering*, and on purpose. Which absolute value a body lands
+    on is a design choice: a page that is mostly ink reads darker in both themes than
+    one that is mostly paper, and both are legitimate. What is not legitimate is a
+    body whose two themes come out the wrong way round, because the theme token is the
+    reader's request and the page is the answer. An ordering also cannot be satisfied
+    by pasting a measured number into the test, which a threshold can.
+
+    Two widths, because the quantity is an area ratio and the areas are a function of
+    the page width: ``process_flow``'s strip was 31.1% of the page at 640px and 27.2%
+    at 1200px, so a body can sit closer to the crossover at one width than another.
+    Both themes of a cell render at the same width and therefore lay out identically
+    -- no font size on this page depends on the theme -- so the two pixel counts are
+    asserted equal as well. A theme that reflowed the page would break the comparison's
+    premise long before it broke the comparison.
+
+    Built from the content and the photographs the shipped CLI actually composes, not
+    from ``make_content()``, and that is the one thing about this cell that has to be
+    got right. The aggregate is an area ratio, so it is only a claim about a body's own
+    regions when the body is most of the page. A three-fact, image-less fixture page is
+    1057-1368px tall and roughly 60% masthead, and the masthead is ink by design:
+    measured on it, ``stat_grid`` reads 115.89 light against 138.38 dark at 1200px and
+    ``ranked_list`` 125.83 against 128.28 -- inverted, on a page where nothing is wrong
+    except that it has almost no body. The ten-fact set is 3469-5935px tall and inverts
+    correctly in all three bodies with images and without.
+
+    Depends on the ``chromium`` fixture for the same reason the sampled-pixel cell
+    does: ``PlaywrightRenderer`` launches its own browser and has no skip of its own,
+    so without the fixture a browserless machine errors instead of skipping.
+    """
+    content = await shipped_panda_content()
+    assert len(content.facts) > len(make_content().facts), (
+        f"the shipped content now carries {len(content.facts)} facts, no more than the "
+        "fixture's: this cell would be measuring the short masthead-dominated page it "
+        "exists to avoid, where an inverted theme is a property of the fixture and not "
+        "of any body"
+    )
+    measured: dict[Theme, tuple[float, int]] = {}
+    for theme in THEMES:
+        composition = await compose_palette_cell(
+            template_id, theme, PANDA_SET, width_px=width_px, content=content
+        )
+        output = tmp_path / f"{template_id}-{width_px}-{theme.value}.png"
+        result = await PlaywrightRenderer().render(composition, output)
+        with Image.open(output) as image:
+            assert (image.width, image.height) == (result.width_px, result.height_px), (
+                f"opened {image.width}x{image.height} but the renderer reported "
+                f"{result.width_px}x{result.height_px}"
+            )
+            measured[theme] = mean_luma_255(image)
+
+    assert set(measured) == set(THEMES), (
+        f"measured {sorted(t.value for t in measured)} of "
+        f"{sorted(t.value for t in THEMES)}: a theme that never rendered cannot be "
+        "compared, and with fewer than two the comparison below has nothing to say"
+    )
+    light_luma, light_pixels = measured[Theme.LIGHT]
+    dark_luma, dark_pixels = measured[Theme.DARK]
+    where = f"{template_id} at {width_px}px"
+
+    assert light_pixels > 0 and dark_pixels > 0, (
+        f"{where}: averaged {light_pixels} light and {dark_pixels} dark pixels -- at "
+        "zero both means are taken over nothing and compare as whatever they were "
+        "initialised to"
+    )
+    assert light_pixels == dark_pixels, (
+        f"{where}: the light render is {light_pixels} pixels and the dark one "
+        f"{dark_pixels}. Only colours differ between the themes, so the two pages must "
+        "lay out identically; different pixel counts mean the comparison below is "
+        "between two different pages and the mean has stopped being about colour"
+    )
+    assert dark_luma < light_luma, (
+        f"{where}: the dark theme renders at {dark_luma:.2f} mean luma and the light "
+        f"theme at {light_luma:.2f}, over {light_pixels} pixels each -- the dark theme "
+        "is the brighter page. The palette is almost certainly innocent: the chrome "
+        "swaps --paper and --patch between themes, so this body's paper-backed and "
+        "patch-backed areas are the wrong way round. Rebalance the body's own regions "
+        "rather than the tokens, which the whole design system shares"
     )

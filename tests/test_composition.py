@@ -9,13 +9,25 @@ Some promises are only observable once a browser has laid the page out -- a
 ``text-transform`` that mangles a licence URI, an ``aspect-ratio`` that a later
 rule overrides, a caption that spills out of its figure. Those are asserted in a
 real chromium DOM against one browser shared by the whole module.
+
+The last section is a different shape from all the others: it asserts an *ordering
+across* elements rather than a value on one. A ranked list's figures have to descend
+with its ranks, and every per-element comparison in this file can be green while the
+column as a whole contradicts the page it is on.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
@@ -45,6 +57,7 @@ from infographic_generator.core.models import (
     Theme,
 )
 from infographic_generator.core.ports import Composer
+from infographic_generator.research import PandaResearcher
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, Page
@@ -4365,4 +4378,236 @@ def test_the_hero_crop_stays_per_body() -> None:
     assert _selector_count(sheet_declarations(CHROME_SHEET), ".hero img") == 0, (
         f"{CHROME_SHEET} has taken over .hero img. Hoisting the crop is a separate "
         "change from hoisting the scrim -- make it deliberately, and update this test"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 14. A ranking's figures descend with its ranks
+# --------------------------------------------------------------------------- #
+# Everything above this section compares one element's computed value against an
+# expectation. This asserts an *ordering across* elements, which ~11,600 such
+# comparisons structurally cannot see: every figure in a ranked list can hold a
+# defensible size of its own while the column as a whole says the wrong thing.
+#
+# It said the wrong thing for a long time. ``--size`` came off the value's character
+# count and ``--fit`` off the same count again, so the real ten-fact content rendered
+# rank 1 at 35.26px under rank 2 at 50.00px, and rank 3 at 18.55px under rank 4 at
+# 50.00px -- four inversions at 640px and two at 1000 and 1200, in both themes, on the
+# content the shipped CLI produces. The page still claimed to be a ranking.
+
+RANK_FIGURE_JS: Final = """
+() => Array.from(document.querySelectorAll('.rank')).map((row, index) => {
+  const value = row.querySelector('.rank__value');
+  const ordinal = row.querySelector('.rank__ordinal');
+  if (value === null || ordinal === null) { return null; }
+  const style = getComputedStyle(value);
+  return {
+    position: index + 1,
+    ordinal: ordinal.innerText.replace(/\\s+/g, ' ').trim(),
+    text: value.innerText.replace(/\\s+/g, ' ').trim(),
+    font_px: parseFloat(style.fontSize),
+    size: style.getPropertyValue('--size').trim(),
+    fit: value.style.getPropertyValue('--fit').trim(),
+  };
+})
+"""
+"""Every ``.rank`` in document order, with the figure it prints.
+
+Walked off the rows rather than off ``.rank__value`` directly, so a row that has lost
+its value or its ordinal comes back as ``null`` instead of shortening the sequence:
+a row the fence cannot see is a row that cannot break the ordering. ``position`` is
+the document index and ``ordinal`` is the number the reader sees, and the assertions
+below check they agree -- reading order *is* rank order here, and nothing else on the
+page encodes it."""
+
+
+@dataclass(frozen=True, slots=True)
+class RankedFigure:
+    """One row's display figure, and the two halves that sized it."""
+
+    position: int
+    """1-based document order of the ``.rank`` this came from."""
+    ordinal: str
+    """The rank the row prints, as text: ``layout`` numbers these, not a CSS counter."""
+    text: str
+    font_px: float
+    size: str
+    """The computed ``--size`` rung. Empty means no rule matched, whatever the classes
+    say -- and with a ``max()`` floor under the figure that failure is *invisible* to
+    an ordering check, because every figure lands on the floor and a flat column is
+    non-increasing."""
+    fit: str
+    """The inline ``--fit`` cap, verbatim."""
+
+
+def read_ranked_figures(rows: Sequence[object]) -> tuple[RankedFigure, ...]:
+    """The browser's JSON, with a missing row a failure rather than a gap."""
+    figures: list[RankedFigure] = []
+    for index, row in enumerate(rows, start=1):
+        assert row is not None, (
+            f".rank #{index} of {len(rows)} has no .rank__value or no .rank__ordinal, "
+            "so it drops out of the ordering entirely -- and a row this fence cannot "
+            "see is a row that cannot break it"
+        )
+        fields = _fields(row)
+        figures.append(
+            RankedFigure(
+                position=int(_number(fields["position"])),
+                ordinal=_text(fields["ordinal"]),
+                text=_text(fields["text"]),
+                font_px=_number(fields["font_px"]),
+                size=_text(fields["size"]),
+                fit=_text(fields["fit"]),
+            )
+        )
+    return tuple(figures)
+
+
+async def shipped_panda_content() -> ResearchContent:
+    """The content the shipped CLI actually composes, from ``assets/panda/facts.json``.
+
+    Through ``PandaResearcher`` rather than by re-reading the JSON here: it is the
+    ``Researcher`` the CLI wires up by default, so this is the content the deliverable
+    is made of, and a second transcription of the fixture's shape in a test file would
+    be a second thing to keep in step. It is also the only set with enough facts to
+    reach the tail of ``layout._RANK_LADDER``.
+
+    Ten facts and three narrative sections, against ``make_content()``'s three and one.
+    That difference is not cosmetic for anything that measures the page as a whole:
+    ``test_palette_fence`` imports this because a three-fact page is 60% masthead and
+    therefore legitimately ink-dominant, which is a fact about the fixture rather than
+    about any body.
+    """
+    return await PandaResearcher().research(make_brief())
+
+
+async def fixture_ranking_content() -> ResearchContent:
+    """``make_content()`` unchanged -- three facts, all values the same length."""
+    return make_content()
+
+
+RANKING_CONTENT: Final[Mapping[str, Callable[[], Awaitable[ResearchContent]]]] = (
+    MappingProxyType(
+        {"real": shipped_panda_content, "fixture": fixture_ranking_content}
+    )
+)
+"""The two content sets this fence runs over, because they fail differently.
+
+The fixture's three values are all four characters long, so the length-derived sizing
+this fence exists to prevent produced *no* inversion on it -- it has only two distinct
+sizes to get wrong. Every one of the six inversions was on the real ten-fact set. A
+fence validated on the fixture alone would have measured nothing at all, which is why
+both are here and why the real one is not optional."""
+
+RANKING_CONTENT_IDS: Final = tuple(RANKING_CONTENT)
+
+
+def test_the_ranking_fence_runs_over_both_content_sets() -> None:
+    """Pinned by content, like the three tables above: an emptied axis is a skip.
+
+    ``RANKING_CONTENT_IDS`` feeds a parametrize axis, so emptying the mapping takes
+    all twelve ordering cells with it and reports green. Dropping only ``"real"``
+    is the subtler half -- six cells survive, none of them able to see the defect.
+    """
+    assert set(RANKING_CONTENT) == {"real", "fixture"}, (
+        f"RANKING_CONTENT covers {sorted(RANKING_CONTENT)}, not both content sets: "
+        "without 'real' the ordering fence keeps its cells and stops being able to "
+        "fail, because the fixture's three equal-length values never inverted"
+    )
+    assert len(RANKING_CONTENT_IDS) == len(RANKING_CONTENT), (
+        "RANKING_CONTENT_IDS has gone stale against RANKING_CONTENT"
+    )
+
+
+@pytest.mark.parametrize("width_px", [1200, 1000, 640])
+@pytest.mark.parametrize("content_set", RANKING_CONTENT_IDS)
+@IN_BOTH_THEMES
+@BROWSER_LOOP
+async def test_a_ranked_figure_never_grows_as_the_rank_falls(
+    chromium: Browser, content_set: str, theme: Theme, width_px: int
+) -> None:
+    """Down a ranked list, the display figures are non-increasing.
+
+    This is the claim ``ranked_list`` makes by being a *ranking*: position is the
+    only thing that encodes standing, so a figure that grows as the rank falls is
+    the page contradicting itself. Non-increasing rather than strictly decreasing --
+    ties are ordinary, because ``min(--size, --fit)`` shares one cap across a run of
+    ranks and ``--size`` has a tail rung.
+
+    It holds by construction rather than by tuning: ``layout._RANK_LADDER`` makes
+    ``--size`` descend with the ordinal and ``layout._descending_caps`` makes ``--fit``
+    a running minimum, and the minimum of two non-increasing sequences is
+    non-increasing. So a red cell here means one of those two stopped descending,
+    which is why the failure prints both halves next to the rendered size.
+
+    Three widths and both themes, and neither axis is decoration. No theme changes
+    any font size on this page, so the two theme cells are expected to agree
+    exactly -- and that agreement is worth having, because it is the assumption every
+    other size measurement in this suite quietly relies on. Width is where it gets
+    interesting: ``--fit`` is measured in ``cqw`` against a column that is a fixed
+    *share* of the page, so a basis that lost its proportionality would show up as
+    one width behaving differently from the others.
+    """
+    content = await RANKING_CONTENT[content_set]()
+    composition = await compose_cell(
+        "ranked_list", theme, content, width_px=width_px
+    )
+
+    async with laid_out(chromium, composition) as page:
+        measured = await page.evaluate(RANK_FIGURE_JS)
+    figures = read_ranked_figures(_rows(measured))
+
+    where = f"ranked_list/{content_set}/{theme.value} at {width_px}px"
+    assert len(figures) == len(content.facts), (
+        f"{where}: measured {len(figures)} ranked figures for "
+        f"{len(content.facts)} facts -- at zero the ordering below runs over nothing "
+        "and this cell passes without looking at a single figure"
+    )
+    assert figures, f"{where}: the ranking is empty, so there is no order to check"
+
+    printed = [figure.ordinal for figure in figures]
+    assert printed == [str(figure.position) for figure in figures], (
+        f"{where}: the printed ordinals are {printed}, which is not document order. "
+        "Reading order is the only thing that encodes rank here, so if the two can "
+        "disagree then 'non-increasing in document order' is the wrong claim"
+    )
+
+    unsized = [
+        (figure.ordinal, figure.size, figure.fit)
+        for figure in figures
+        if not (figure.size and figure.fit)
+    ]
+    assert not unsized, (
+        f"{where}: {unsized} resolve --size/--fit to nothing, so "
+        f"min(var(--size), var(--fit)) is invalid at computed-value time and every "
+        f"figure falls back on `.rank__value`'s max() floor. That is a *flat* column, "
+        "which is non-increasing -- this fence would pass on a thoroughly broken page "
+        "without this assertion"
+    )
+
+    inversions = [
+        (above, below)
+        for above, below in zip(figures, figures[1:], strict=False)
+        if below.font_px > above.font_px
+    ]
+    assert not inversions, (
+        f"{where}: a lower rank is set larger than the rank above it:\n"
+        + "\n".join(
+            f"  #{above.ordinal} {above.text!r} at {above.font_px}px "
+            f"(--size {above.size}, --fit {above.fit}) then "
+            f"#{below.ordinal} {below.text!r} at {below.font_px}px "
+            f"(--size {below.size}, --fit {below.fit})"
+            for above, below in inversions
+        )
+        + "\nDisplay size is how this body expresses rank, so either --size stopped "
+        "descending with the ordinal (layout._RANK_LADDER) or --fit stopped being a "
+        "running minimum (layout._descending_caps)"
+    )
+
+    lead, last = figures[0], figures[-1]
+    assert lead.font_px > last.font_px, (
+        f"{where}: the whole column is set at {lead.font_px}px -- rank "
+        f"#{lead.ordinal} and rank #{last.ordinal} are the same size, so the ordering "
+        "above holds while size expresses no rank at all. A flat column passes every "
+        "non-increasing check ever written"
     )

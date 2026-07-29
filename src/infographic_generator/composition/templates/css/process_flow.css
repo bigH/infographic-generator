@@ -24,7 +24,15 @@
 }
 
 /* --- the rail ------------------------------------------------------- */
-.flow { padding-block: 34px 18px; }
+/* A query container, so the step can change shape on the width of the rail rather
+   than on the width of the viewport. Nothing here may ask about the viewport's
+   *height*: under `height_px=None` the renderer runs a 1px viewport, so `vh` and
+   `vmin` are meaningless and `position: fixed` pins to the top. Width is safe, and
+   a container query is the narrower question anyway. */
+.flow {
+  container-type: inline-size;
+  padding-block: 34px 18px;
+}
 .step {
   position: relative;
   display: flex;
@@ -63,6 +71,32 @@
 }
 
 .step__text { padding-top: 4px; }
+/* Wide enough, and the heading becomes a side-head with the explanation beside it --
+   the device `ranked_list`'s `.section` already uses, so the two bodies read as
+   siblings here as well.
+
+   It is a width fix before it is a typographic one. `.step__body`'s measure caps at
+   78ch, which is 686px at the 16.5px reading size, and the step's text column is 972px
+   at the shipped 1200px default: stacked, that abandons the right 286px of every step,
+   and it measured as a 368px empty square inside `.flow` -- the largest void anywhere
+   on the page. Side by side, 260 + 32 + 680 comes to exactly the 972px available and
+   the largest square drops to the height of one heading column.
+
+   760px is where it turns on, and the number comes from the *body's* measure rather
+   than from taste: the body column gets `container - 56 (badge) - 28 (gap) - 260
+   (side-head) - 32 (gap)`, so 760px leaves 384px, which is 44ch. Below that the
+   explanation reads as a newspaper column and stacking is better. Measured container
+   widths are 564px at a 640px page, 792px at 900, 880px at 1000 and 1056px at 1200, so
+   640 stacks and everything from 900 up sets side by side. */
+@container (min-width: 760px) {
+  .step__text {
+    display: grid;
+    grid-template-columns: minmax(180px, 260px) minmax(0, 78ch);
+    gap: 32px;
+  }
+  /* The grid track carries the measure now, and the gap carries the separation. */
+  .step__body { margin-top: 0; max-width: none; }
+}
 .step__heading {
   font-family: var(--display);
   font-weight: 700;
@@ -79,9 +113,31 @@
 }
 
 /* --- fact strip ----------------------------------------------------- */
+/* Paper-backed, and that is a *proportion* decision rather than a colour one. The
+   chrome swaps `--paper` and `--patch` wholesale between themes, so a page's
+   aggregate luminance follows its paper/patch area ratio and nothing else. This
+   strip is the largest region on the page -- 31.1% of it at 640px -- and while it
+   was patch-backed the body ran 66.5% patch to 24.5% paper, which made
+   `process_flow`'s *dark* theme brighter than its light one: 153.78 mean luma
+   against 96.52 at 640px, inverted at all three widths, and the only body of the
+   three that did it. `ranked_list` is the mirror image at 67.7% paper and inverts
+   correctly, so the fix is to match its balance, not to touch the palette that both
+   of them share.
+
+   With this flipped the ratio is 35.4% patch to 55.6% paper at 640px, and the page
+   reads 156.16 mean luma light against 93.23 dark -- inverting the same way as the
+   other two bodies at all three widths. The band rhythm survives because it becomes
+   exactly `ranked_list`'s rhythm: two ink panels at the top, an ink colophon at the
+   bottom, paper in between, with the ink accents inside the paper carried by
+   `.step__badge`. What replaces the panel edge is the rule below -- the same device
+   `.apparatus` uses to start a section on paper.
+
+   Everything inside therefore reads its paper token, and the `on-ink` class is gone
+   from the markup: an element on paper that keeps `--dim-patch` is the one failure
+   mode of this edit, and it is a legible one -- `--dim-patch` is #a29e8d on #eceae2,
+   1.53:1. */
 .strip {
-  background: var(--patch);
-  color: var(--on-patch);
+  border-top: 1px solid var(--rule-paper);
   padding-block: 30px 36px;
 }
 .strip__label { margin-bottom: 20px; }
@@ -112,7 +168,7 @@
   container-type: inline-size;
   break-inside: avoid;
   margin-bottom: 22px;
-  border-top: 1px solid var(--rule-patch);
+  border-top: 1px solid var(--rule-paper);
   padding-top: 14px;
 }
 .chip__label {
@@ -121,7 +177,7 @@
   letter-spacing: 0.15em;
   text-transform: uppercase;
   line-height: 1.5;
-  color: var(--accent-patch);
+  color: var(--accent-paper);
 }
 .chip__value {
   margin-top: 8px;
@@ -142,13 +198,13 @@
   font-weight: 400;
   letter-spacing: 0.04em;
   margin-inline-start: 0.34em;
-  color: var(--dim-patch);
+  color: var(--dim-paper);
 }
 .chip__detail {
   margin-top: 10px;
   font-size: 14.5px;
   line-height: 1.45;
-  color: var(--dim-patch);
+  color: var(--dim-paper);
 }
 .chip__src { margin-top: 9px; }
 

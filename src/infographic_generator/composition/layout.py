@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
+from itertools import accumulate
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, TypeAlias, assert_never
@@ -84,10 +85,15 @@ _MIN_FIT_CQW: Final = 3.0
 class Scale(StrEnum):
     """The editorial ceiling on how much room a headline string may take.
 
-    Chosen from character count, so ``"1,864"`` gets to shout while a long value
-    starts smaller. It is only a ceiling: the template additionally caps the
-    font size at :attr:`Stat.fit`, derived from the width of the column the value
-    actually has to sit in, so a long value cannot overflow a narrow page.
+    In the ledger it is chosen from character count, so ``"1,864"`` gets to shout
+    while a long value starts smaller. In a *ranking* it is chosen from the
+    ordinal instead -- see :data:`_RANK_LADDER` -- because there display size is
+    how rank is expressed, and a ceiling taken from length makes size track the
+    string rather than the standing.
+
+    Either way it is only a ceiling: the template additionally caps the font size
+    at :attr:`Stat.fit` / :attr:`Rank.fit`, derived from the width of the column the
+    value actually has to sit in, so a long value cannot overflow a narrow page.
     """
 
     XL = "xl"
@@ -237,9 +243,20 @@ class Rank:
     detail: str | None
     attribution: str | None
     scale: Scale
-    """The editorial ceiling on the value's size, as in the ledger."""
+    """The editorial ceiling on the value's size, chosen from :attr:`ordinal`.
+
+    Not from the value's length, which is what the ledger does: in a ranking the
+    figure's size *is* the rank, so a ceiling taken from character count made a
+    long third place shrink below a short fourth. See :data:`_RANK_LADDER`.
+    """
     fit: str
-    """Width-derived cap on the value's font size, in container units."""
+    """Width-derived cap on the value's font size, in container units.
+
+    Non-increasing down the ranking, not per-value: it is the tightest cap any
+    value at this rank *or above* needs -- see :func:`_descending_caps`. That is
+    what makes ``min(--size, --fit)`` non-increasing in rank by construction,
+    since both halves are.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,10 +342,7 @@ def build_ranked_list_page(
     hero, rest = _all_figures(images)
     body = RankedListBody(
         hero=hero,
-        ranks=tuple(
-            _rank(fact, ordinal=index)
-            for index, fact in enumerate(content.facts, start=1)
-        ),
+        ranks=_ranking(content.facts),
         sections=tuple(_section(section) for section in content.sections),
         figures=rest,
     )
@@ -573,7 +587,16 @@ def _fit(text: str, advance: float, extra: float = 0.0) -> str:
     page width: this is what stops ``26-84 lb (12-38 kg)`` from breaking across
     three lines when the page narrows.
     """
-    width = max(1.0, len(text.strip()) * advance + extra)
+    return _fit_cqw(_advance_width(text, advance, extra))
+
+
+def _advance_width(text: str, advance: float, extra: float = 0.0) -> float:
+    """How wide ``text`` sets, in ems of its own font size."""
+    return max(1.0, len(text.strip()) * advance + extra)
+
+
+def _fit_cqw(width: float) -> str:
+    """A width in ems turned into the font size that makes it fill one column."""
     return f"{max(_MIN_FIT_CQW, 100 / width):.2f}cqw"
 
 
@@ -733,7 +756,65 @@ def _unit_width(unit: str | None) -> float:
     return 0.0 if unit is None else len(unit.strip()) * _UNIT_ADVANCE + 0.5
 
 
-def _rank(fact: Fact, *, ordinal: int) -> Rank:
+_RANK_LADDER: Final[tuple[Scale, ...]] = (Scale.XL, Scale.XL, Scale.L, Scale.M, Scale.S)
+"""The rung each rank's figure earns, by ordinal; past the end, the last rung.
+
+Read against ``ranked_list.css``, which spends the ramp twice: rank 1 is the lead
+row and its ``.value--*`` classes resolve two rungs higher than everyone else's. So
+this ladder renders as ``76 50 41 33 27 27 ...`` px, not as four sizes -- the lead
+override is what buys the fifth. Non-increasing because the first entry is the
+highest ``Scale`` and the lead's rungs sit above the ordinary ones for every
+``Scale``, which together are why rank 1 cannot come out smaller than rank 2.
+
+Five entries for a page that may carry any number of facts: a ranking is a podium
+and a tail. Past fifth the figures stop stepping down and settle on ``--s0``, which
+is still 1.64x the 16.5px prose they headline -- there is no rung below it, and
+inventing one to keep a twentieth place visibly smaller than a nineteenth would
+trade legibility for a distinction nobody reads.
+"""
+
+
+def _ranking(facts: Sequence[Fact]) -> tuple[Rank, ...]:
+    """The whole ranking at once, because two of its decisions are not per-fact.
+
+    A rank's rung comes from its ordinal and its cap from every value at or above
+    it, so neither can be computed from a ``Fact`` alone -- which is why this
+    exists and :func:`_stat` has no counterpart.
+    """
+    caps = _descending_caps(facts)
+    return tuple(
+        _rank(fact, ordinal=ordinal, fit=fit)
+        for ordinal, (fact, fit) in enumerate(zip(facts, caps, strict=True), start=1)
+    )
+
+
+def _descending_caps(facts: Sequence[Fact]) -> tuple[str, ...]:
+    """The width-derived cap at each rank: the tightest one needed so far.
+
+    Per-value caps are the ledger's answer and the wrong one here. ``--size``
+    descends with the ordinal, but a per-value ``--fit`` does not descend with
+    anything -- so ``min()`` of the two used to hand rank 3 (``26-84 lb (12-38
+    kg)``, 19 characters, capped at 18.55px) less type than rank 4 (``~99%``, four
+    characters, uncapped at 50px), on the real ten-fact content, at every width.
+    A running maximum of the widths -- equivalently a running minimum of the caps
+    -- is non-increasing by construction, so the ``min()`` is too.
+
+    Taken over the running values rather than over the single longest one in the
+    ranking: both are monotone, and this one is never tighter. Measured on the real
+    ten-fact content at 640px, sharing the longest value's cap flattens the whole
+    column to 19.26px -- ten identical figures, rank expressed by nothing at all --
+    where the running maximum sets rank 1 at 40.43px and steps down through 21.27 to
+    19.26. A cap is a promise that *this* value fits its column; there is no reason
+    to also make rank 1 fit rank 8's string.
+    """
+    widths = (
+        _advance_width(fact.value, _VALUE_ADVANCE, _unit_width(fact.unit))
+        for fact in facts
+    )
+    return tuple(map(_fit_cqw, accumulate(widths, max)))
+
+
+def _rank(fact: Fact, *, ordinal: int, fit: str) -> Rank:
     return Rank(
         ordinal=ordinal,
         label=_legible_text(fact.label),
@@ -741,9 +822,14 @@ def _rank(fact: Fact, *, ordinal: int) -> Rank:
         unit=_legible_optional(fact.unit),
         detail=_legible_optional(fact.detail),
         attribution=_attribution(fact.source),
-        scale=_scale_for(fact.value, (7, 13, 20)),
-        fit=_fit(fact.value, _VALUE_ADVANCE, _unit_width(fact.unit)),
+        scale=_rank_scale(ordinal),
+        fit=fit,
     )
+
+
+def _rank_scale(ordinal: int) -> Scale:
+    """The ladder rung a 1-based ordinal earns, clamped to the ladder's tail."""
+    return _RANK_LADDER[min(ordinal, len(_RANK_LADDER)) - 1]
 
 
 def _attribution(source: Source | None) -> str | None:
