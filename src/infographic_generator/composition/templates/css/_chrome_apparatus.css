@@ -7,7 +7,22 @@
 .apparatus { border-top: 1px solid var(--rule-paper); padding-block: 28px 34px; }
 .apparatus__label { margin-bottom: 18px; }
 .refs { columns: 2; column-gap: 42px; }
-.refs li { break-inside: avoid; margin-bottom: 14px; font-size: 13.5px; line-height: 1.4; }
+/* `overflow-wrap` belongs on the item and not only on `.refs__meta` below, because
+   a reference's *title* can be a URL host: `layout.py`'s `_reference` falls back to
+   `_host(source.url)` when a source has no title, and that host is an uncapped
+   `netloc`. Three maximum-length DNS labels are a legal 203-character host with a
+   63-character unbroken run, which set the `<li>` to 1365px inside a 507px column
+   and took `body` from 1200 to 1437 -- a fixed-width page with no `overflow: hidden`
+   widens the PNG rather than clipping. `anywhere` rather than `break-word` to match
+   `.title`, and because only `anywhere` also shrinks the min-content contribution
+   the multicol above sizes against. */
+.refs li {
+  break-inside: avoid;
+  margin-bottom: 14px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 .refs__meta {
   display: block;
   font-family: var(--data);

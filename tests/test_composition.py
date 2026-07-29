@@ -60,6 +60,18 @@ STYLE_PAYLOAD = "</style><script>alert(2)</script>"
 URL_PAYLOAD = "javascript:alert(1)"
 MARKUP_PAYLOADS = (SCRIPT_PAYLOAD, ATTR_PAYLOAD, STYLE_PAYLOAD)
 
+DNS_LABEL_MAX = 63
+LONG_HOST = ".".join(letter * DNS_LABEL_MAX for letter in "abc")
+UNTITLED_SOURCE_URL = f"https://{LONG_HOST}.example.com/p"
+"""A legal URL whose *host* is 203 characters of maximum-length DNS labels.
+
+Not a malformed string a URL fence would reject -- every label is exactly the
+per-label maximum, so this is well-formed and gets admitted. It is a length attack
+rather than a markup one, and it reaches the page through a door the markup payloads
+above cannot: ``layout.py``'s ``_reference`` titles a source ``source.title or
+_host(source.url)``, and ``_host`` returns an uncapped ``netloc``. An *untitled*
+source therefore writes a 63-character unbroken run into the bibliography."""
+
 REMOTE_SCHEMES = ("http://", "https://", "//")
 VOID_ELEMENTS = frozenset(
     {
@@ -796,10 +808,19 @@ async def test_researched_urls_survive_as_visible_text_not_as_links() -> None:
 
 
 def hostile_inputs() -> tuple[ResearchContent, tuple[ImageAsset, ...]]:
-    """Untrusted web text with an XSS payload in every string-bearing field."""
+    """Untrusted web text with an XSS payload in every string-bearing field.
+
+    Two shapes of hostile, not one. Every field that can carry markup carries it,
+    and one source arrives *untitled* -- because a titled source never reaches
+    ``layout.py``'s ``title=source.title or _host(source.url)`` fallback, so for as
+    long as every fixture here had a title that branch had never once been given
+    hostile input. What it does with an untitled source is emit the URL's host, and
+    an uncapped host is a length attack rather than a markup one.
+    """
     hostile_source = Source(
         url=URL_PAYLOAD, title=SCRIPT_PAYLOAD, publisher=ATTR_PAYLOAD
     )
+    untitled_source = Source(url=UNTITLED_SOURCE_URL, title=None, publisher=None)
     content = ResearchContent(
         title=SCRIPT_PAYLOAD,
         subtitle=ATTR_PAYLOAD,
@@ -819,7 +840,7 @@ def hostile_inputs() -> tuple[ResearchContent, tuple[ImageAsset, ...]]:
             ),
         ),
         keywords=(SCRIPT_PAYLOAD,),
-        sources=(hostile_source,),
+        sources=(hostile_source, untitled_source),
     )
     images = (
         make_asset(
@@ -1738,6 +1759,70 @@ async def test_nothing_overflows_the_box_it_is_laid_out_in(
             f"({row['problem']}) by {row['pixels']}px"
             for row in offenders
         )
+    )
+
+
+@IN_BOTH_THEMES
+@BROWSER_LOOP
+async def test_an_untitled_source_cannot_widen_the_page_with_its_host(
+    chromium: Browser, theme: Theme
+) -> None:
+    """A reference with no title falls back to its URL host, which nothing caps.
+
+    ``_host`` returns ``urlsplit().netloc`` whole, so a source that arrives without a
+    title -- which the port permits -- writes its host into ``Reference.title`` and
+    thence into ``<li>`` at ``_base.html.j2:47``. ``body`` is ``width: var(--w)`` with
+    no ``overflow: hidden``, so an unbreakable run there does not clip: it widens the
+    document, and the renderer screenshots the wider box. Measured before ``.refs li``
+    gained ``overflow-wrap``: the ``<li>`` set 1365px inside its 507px column and took
+    ``body`` from 1200 to 1437.
+
+    The escaping fixtures could not have caught this. ``hostile_inputs`` gives every
+    source a ``title``, so the ``_host`` fallback branch has never been exercised by
+    hostile input at all -- the assertion measured the wrong branch, which is the
+    fifth time that shape of hole has been found in this zone.
+    """
+    content = make_content(
+        facts=make_facts(7),
+        sources=(Source(url=UNTITLED_SOURCE_URL, title=None, publisher=None),),
+    )
+    composition = await compose_cell("stat_grid", theme, content, PANDA_SET)
+
+    assert LONG_HOST in composition.html, (
+        "the long host never reached the document, so this cell proves nothing: "
+        "_reference no longer falls back to _host, or _unique_by_url dropped the source"
+    )
+
+    async with laid_out(chromium, composition) as page:
+        measured: dict[str, object] = await page.evaluate(OVERFLOW_JS)
+        page_width: dict[str, object] = await page.evaluate(
+            "() => ({scroll: document.documentElement.scrollWidth,"
+            " client: document.body.clientWidth})"
+        )
+
+    examined = int(_number(measured["examined"]))
+    offenders = [_fields(row) for row in _rows(measured["offenders"])]
+    scroll = _number(page_width["scroll"])
+    client = _number(page_width["client"])
+
+    assert examined >= MIN_EXAMINED_BOXES, (
+        f"only {examined} boxes laid out in {theme.value}, under "
+        f"{MIN_EXAMINED_BOXES}: a page with nothing on it overflows nothing"
+    )
+    assert not offenders, (
+        f"an untitled source's {len(LONG_HOST)}-character host overflows in "
+        f"{theme.value}:\n"
+        + "\n".join(
+            f"  {row['element']} overflows {row['parent']} "
+            f"({row['problem']}) by {row['pixels']}px"
+            for row in offenders
+        )
+    )
+    assert scroll <= client, (
+        f"the document scrolls to {scroll}px inside a {client}px body in "
+        f"{theme.value}, so the PNG comes out {scroll - client}px wider than the "
+        "width that was asked for. An unbreakable run in the bibliography is the "
+        "usual cause; .refs li needs overflow-wrap"
     )
 
 
