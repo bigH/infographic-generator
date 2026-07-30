@@ -31,11 +31,13 @@ from PIL import Image
 from infographic_generator.core.models import (
     Brief,
     ImageAsset,
+    ImageCredit,
     ImageRole,
     ResearchContent,
 )
 from infographic_generator.imagery import WikimediaImageSourcer, WikimediaSettings
 from infographic_generator.imagery.licensing import (
+    MAX_LICENSE_URL_CHARS,
     normalize_license,
     read_credit,
     strip_markup,
@@ -45,6 +47,7 @@ from infographic_generator.imagery.prepare import (
     hamming_distance,
     prepare,
 )
+from infographic_generator.imagery.wikimedia import _query_terms
 
 ENDPOINT = "https://commons.wikimedia.org/w/api.php"
 BLOCKED_TITLE = "File:Panda velká.jpg"
@@ -964,3 +967,371 @@ def _decoded_size(asset: ImageAsset) -> tuple[int, int]:
     assert isinstance(asset.content, bytes)
     with Image.open(io.BytesIO(asset.content)) as image:
         return image.size
+
+
+# --------------------------------------------------------------------------- #
+# The licence URL, and the spellings of a denylisted title                     #
+# --------------------------------------------------------------------------- #
+
+CLEAN_METADATA: Mapping[str, Mapping[str, str]] = {
+    "License": {"value": "cc-by-sa-4.0"},
+    "Artist": {"value": "Gzen92"},
+}
+"""Metadata that yields a credit, so a test can vary exactly one field."""
+
+
+def credit_for_license_url(url: str) -> ImageCredit:
+    """The credit read from clean CC BY-SA metadata carrying ``url``.
+
+    Asserts the candidate survives: a refused licence URL must cost the URL only.
+    """
+    credit = read_credit(
+        {**CLEAN_METADATA, "LicenseUrl": {"value": url}},
+        file_page_url="https://commons.wikimedia.org/wiki/File:Fine.jpg",
+        title="File:Fine.jpg",
+    )
+    assert credit is not None
+    return credit
+
+
+def credit_for_title(title: str) -> ImageCredit | None:
+    """``read_credit`` over metadata clean apart from which file it names."""
+    return read_credit(CLEAN_METADATA, file_page_url="https://x.invalid", title=title)
+
+
+def test_a_benign_license_url_round_trips_verbatim() -> None:
+    """Without this, "always return None" would pass every rejection test below."""
+    deed = "https://creativecommons.org/licenses/by-sa/4.0/"
+
+    assert credit_for_license_url(deed).license_url == deed
+
+
+def test_a_license_url_wrapped_in_markup_is_flattened() -> None:
+    """``extmetadata`` values arrive as HTML fragments, licence links included."""
+    anchor = '<a rel="license" href="/x">https://creativecommons.org/licenses/by/2.0/</a>'
+
+    url = credit_for_license_url(anchor).license_url
+
+    assert url == "https://creativecommons.org/licenses/by/2.0/"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("javascript:alert(1)", id="javascript-scheme"),
+        pytest.param("data:text/plain,cc-by-sa-4.0", id="data-scheme"),
+        pytest.param("ftp://licences.invalid/by-sa", id="ftp-scheme"),
+        pytest.param("//creativecommons.org/licenses/by/4.0/", id="no-scheme"),
+        pytest.param("https:///licenses/by/4.0/", id="no-hostname"),
+        pytest.param("Creative Commons Attribution 4.0", id="prose-not-a-url"),
+        pytest.param("https://user:pw@licences.invalid/x", id="user-and-password"),
+        pytest.param("https://user@licences.invalid/x", id="user-only"),
+        pytest.param("https://:pw@licences.invalid/x", id="password-only"),
+    ],
+)
+def test_an_unusable_license_url_costs_the_url_and_not_the_candidate(url: str) -> None:
+    """Credits are rendered as visible text, so a licence URL has to look like one
+    -- and userinfo would print a password into the PNG."""
+    credit = credit_for_license_url(url)
+
+    assert credit.license_url is None
+    assert credit.license == "CC-BY-SA-4.0"  # the file itself is still usable
+    assert credit.author == "Gzen92"
+
+
+def test_an_empty_userinfo_license_url_is_still_admitted() -> None:
+    """``https://@host/x`` leaks nothing -- the research zone admits it too."""
+    url = "https://@creativecommons.org/licenses/by-sa/4.0/"
+
+    assert credit_for_license_url(url).license_url == url
+
+
+@pytest.mark.parametrize(
+    ("length", "admitted"),
+    [
+        pytest.param(MAX_LICENSE_URL_CHARS, True, id="exactly-the-cap"),
+        pytest.param(MAX_LICENSE_URL_CHARS + 1, False, id="one-over"),
+    ],
+)
+def test_an_over_long_license_url_is_dropped_not_truncated(
+    length: int, admitted: bool
+) -> None:
+    """A clipped licence URI is a false statement about the licence, so it goes
+    entirely -- and a 10 KB one grew a real render by 54% in height."""
+    prefix = "https://licences.invalid/"
+    url = prefix + "a" * (length - len(prefix))
+    assert len(url) == length
+
+    credit = credit_for_license_url(url)
+
+    assert credit.license_url == (url if admitted else None)
+    assert credit.license == "CC-BY-SA-4.0"
+
+
+def test_an_unparseable_license_url_does_not_raise() -> None:
+    """``urlparse("https://[::1")`` raises ``Invalid IPv6 URL``; this module
+    promises ``None`` for hostile metadata, never an exception."""
+    credit = credit_for_license_url("https://[::1")
+
+    assert credit.license_url is None
+    assert credit.license == "CC-BY-SA-4.0"
+
+
+async def test_an_over_long_license_url_never_reaches_a_selected_asset() -> None:
+    commons = single_slot_commons()
+    _set_metadata(commons, "LicenseUrl", "https://licences.invalid/" + "a" * 10_000)
+
+    (asset,) = await source(commons, ["panda"])
+
+    assert asset.credit.license_url is None
+    assert asset.credit.license == "CC-BY-SA-4.0"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        pytest.param(BLOCKED_TITLE, id="canonical-nfc"),
+        pytest.param("File:Panda velka\u0301.jpg", id="nfd-combining-acute"),
+        pytest.param("File:Panda_velk\u00e1.jpg", id="underscored-as-a-page-url-spells-it"),
+        pytest.param("  FILE:Panda_Velka\u0301.JPG  ", id="all-of-the-above-at-once"),
+    ],
+)
+def test_every_spelling_of_the_poisoned_title_is_refused(title: str) -> None:
+    """The denylist exists because the EXIF credits naturepl.com/WWF. A caller
+    holding a page-URL title, or a decomposed one, must not slip past it."""
+    assert credit_for_title(title) is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        pytest.param("File:Panda one.jpg", id="another-panda-file"),
+        pytest.param("File:Panda velk\u00fd.jpg", id="a-near-miss-adjective"),
+        pytest.param("File:Panda_velka.jpg", id="unaccented-and-underscored"),
+    ],
+)
+def test_normalising_the_title_does_not_deny_innocent_files(title: str) -> None:
+    credit = credit_for_title(title)
+
+    assert credit is not None
+    assert credit.license == "CC-BY-SA-4.0"
+
+
+# --------------------------------------------------------------------------- #
+# Relevance off the Latin alphabet: the junk filter must not switch itself off  #
+# --------------------------------------------------------------------------- #
+
+ARABIC_QUERY = "الباندا العملاقة"
+""""The giant panda". Two whitespace-separated terms, so the floor is
+``ceil(2 * 0.75) == 2`` and filtering genuinely has work to do."""
+
+CHINESE_QUERY = "大熊猫吃竹子"
+""""Giant panda eating bamboo", written without spaces between the words."""
+
+FRENCH_QUERY = "panda géant"
+
+
+def junk_and_one_match(query: str, panda_description: str) -> FakeCommons:
+    """Commons' real top hits for a "giant panda" search, plus one true match.
+
+    Saturn and the Galapagos tortoise are ranked first and carry no description,
+    so they mention nothing the query asked for. The panda page is ranked last and
+    described by the caller, which is how a keyword in one script meets a file
+    described in another.
+    """
+    saturn = "https://files.invalid/ml-saturn.jpg"
+    tortoise = "https://files.invalid/ml-tortoise.jpg"
+    panda = "https://files.invalid/ml-panda.jpg"
+    return FakeCommons(
+        pages={
+            query: [
+                commons_page(
+                    1, "File:Latest Saturn Portrait.jpg", download_url=saturn, index=1
+                ),
+                commons_page(
+                    2, "File:Galapagos Giant Tortoise.jpg", download_url=tortoise, index=2
+                ),
+                commons_page(
+                    3,
+                    "File:Giant panda.jpg",
+                    download_url=panda,
+                    index=3,
+                    description=panda_description,
+                ),
+            ]
+        },
+        files={
+            saturn: jpeg_bytes(900, 600, seed=50),
+            tortoise: jpeg_bytes(900, 600, seed=51),
+            panda: jpeg_bytes(900, 600, seed=52),
+        },
+    )
+
+
+def arabic_commons() -> FakeCommons:
+    return junk_and_one_match(ARABIC_QUERY, f"صورة لـ {ARABIC_QUERY}.")
+
+
+async def test_an_arabic_keyword_drops_the_candidates_that_match_nothing() -> None:
+    """The researcher writes keywords in ``brief.locale``, so an ASCII-only term
+    class saw no terms at all here and returned all three candidates unranked."""
+    commons = arabic_commons()
+
+    assets = await source(commons, [ARABIC_QUERY])
+
+    assert selected_titles(assets) == ["File:Giant panda.jpg"]
+
+
+async def test_an_arabic_keyword_does_not_put_saturn_in_the_hero_slot() -> None:
+    commons = arabic_commons()
+
+    assets = await source(commons, [ARABIC_QUERY])
+
+    titles = selected_titles(assets)
+    assert "File:Latest Saturn Portrait.jpg" not in titles
+    assert "File:Galapagos Giant Tortoise.jpg" not in titles
+    assert assets[0].role is ImageRole.HERO
+    assert assets[0].credit.source is not None
+    assert assets[0].credit.source.title == "File:Giant panda.jpg"
+    assert commons.downloaded == ["https://files.invalid/ml-panda.jpg"]
+
+
+async def test_an_unsegmentable_chinese_keyword_returns_nothing_not_junk() -> None:
+    """The documented trade, asserted rather than hoped for.
+
+    No regex word-segments 大熊猫吃竹子, so it stays one six-character term, no
+    Latin Commons title or description contains that phrase, and the slot empties.
+    Change this only alongside ``_by_relevance``'s second "Known limit": a
+    segmenter that makes it pass must update the prose that says it cannot.
+    """
+    commons = junk_and_one_match(
+        CHINESE_QUERY, "A giant panda eating bamboo shoots in Sichuan."
+    )
+
+    assets = await source(commons, [CHINESE_QUERY])
+
+    assert assets == ()
+    assert selected_titles(assets) == []
+    assert commons.download_requests == []  # not even fetched, let alone returned
+
+
+async def test_an_accented_keyword_no_longer_matches_on_a_split_stem() -> None:
+    """A *red* panda is not a giant panda, and used to win this slot anyway.
+
+    While the term class was ASCII, "panda géant" tokenised to ``{"panda",
+    "ant"}`` -- the accent split "géant" and left the garbage term "ant", which
+    "mangeant" contains. Two of two terms matched, so the file cleared the floor.
+    """
+    red = "https://files.invalid/panda-roux.jpg"
+    commons = FakeCommons(
+        pages={
+            FRENCH_QUERY: [
+                commons_page(
+                    1,
+                    "File:Panda roux.jpg",
+                    download_url=red,
+                    description="Un panda roux mangeant des pousses de bambou.",
+                )
+            ]
+        },
+        files={red: jpeg_bytes(900, 600, seed=53)},
+    )
+
+    assert await source(commons, [FRENCH_QUERY]) == ()
+    assert commons.download_requests == []
+
+
+async def test_a_candidate_naming_the_number_beats_one_that_only_names_the_noun() -> None:
+    """Digits are terms too: without them every numbered keyword would match on
+    its noun alone, which is one term short of the floor's whole point."""
+    counted = "https://files.invalid/counted.jpg"
+    uncounted = "https://files.invalid/uncounted.jpg"
+    commons = FakeCommons(
+        pages={
+            "1000 pandas": [
+                commons_page(
+                    1,
+                    "File:Wild pandas.jpg",
+                    download_url=uncounted,
+                    index=1,
+                    description="Wild pandas in Sichuan.",
+                ),
+                commons_page(
+                    2,
+                    "File:1000 wild pandas counted.jpg",
+                    download_url=counted,
+                    index=2,
+                    description="A chart of 1000 wild pandas.",
+                ),
+            ]
+        },
+        files={
+            uncounted: jpeg_bytes(900, 600, seed=54),
+            counted: jpeg_bytes(900, 600, seed=55),
+        },
+    )
+
+    assets = await source(commons, ["1000 pandas"])
+
+    assert selected_titles(assets) == ["File:1000 wild pandas counted.jpg"]
+    assert uncounted not in commons.downloaded
+
+
+async def test_a_keyword_with_no_matchable_term_still_admits_its_candidates() -> None:
+    """The empty-term fallback narrowed but did not close. "3D +/-" has no run of
+    three letters or digits, so there is nothing to rank on and the slot keeps the
+    API's own ordering rather than dropping everything on no evidence."""
+    url = "https://files.invalid/no-terms.jpg"
+    commons = FakeCommons(
+        pages={"3D +/-": [commons_page(1, "File:Something Else.jpg", download_url=url)]},
+        files={url: jpeg_bytes(900, 600, seed=56)},
+    )
+
+    assert selected_titles(await source(commons, ["3D +/-"])) == ["File:Something Else.jpg"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param(
+            "giant panda eating bamboo",
+            frozenset({"giant", "panda", "eating", "bamboo"}),
+            id="english-must-not-drift",
+        ),
+        pytest.param(
+            "the panda and its bamboo",
+            frozenset({"panda", "bamboo"}),
+            id="english-stopwords-still-filtered",
+        ),
+        pytest.param(FRENCH_QUERY, frozenset({"panda", "géant"}), id="french-accented"),
+        pytest.param(
+            "большая панда", frozenset({"большая", "панда"}), id="russian-cyrillic"
+        ),
+        pytest.param(
+            ARABIC_QUERY, frozenset({"الباندا", "العملاقة"}), id="arabic"
+        ),
+        pytest.param(
+            CHINESE_QUERY, frozenset({CHINESE_QUERY}), id="chinese-one-unsegmented-run"
+        ),
+        pytest.param(
+            "ジャイアントパンダ",
+            frozenset({"ジャイアントパンダ"}),
+            id="japanese-one-unsegmented-run",
+        ),
+        pytest.param(
+            "ยักษ์แพนด้า", frozenset({"แพนด"}), id="thai-combining-marks-split-the-run"
+        ),
+        pytest.param("1000 pandas", frozenset({"1000", "pandas"}), id="digits-are-terms"),
+        pytest.param(
+            "snake_case term",
+            frozenset({"snake", "case", "term"}),
+            id="underscore-is-not-a-term-character",
+        ),
+        pytest.param("3D +/-", frozenset(), id="nothing-long-enough-to-match-on"),
+    ],
+)
+def test_query_terms_reads_every_script(query: str, expected: frozenset[str]) -> None:
+    """The exact term set, not membership: the English rows are a regression pin so
+    a later widening of :data:`_TERM` cannot quietly alter Latin behaviour, and the
+    unsegmented rows record what a regex genuinely cannot do."""
+    assert _query_terms(query) == expected

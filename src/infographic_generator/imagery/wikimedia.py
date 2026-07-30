@@ -51,7 +51,21 @@ _ACCEPTED_MIME_TYPES: Final[frozenset[str]] = frozenset(
 """Pre-filter on the API's declared type. The authority on what we actually
 return is :func:`prepare`, which re-derives it from the decoded bytes."""
 
-_TERM: Final = re.compile(r"[0-9a-z]{3,}")
+# TODO: a regex cannot word-segment Chinese, Japanese, Thai or Khmer, so a keyword
+# in one of those scripts collapses to a single unmatchable run and its slot comes
+# back empty -- see the second "Known limit" in :func:`_by_relevance`. The fix is
+# the vision pass CLAUDE.md anticipates, not a wider character class.
+_TERM: Final = re.compile(r"[^\W_]{3,}")
+"""Runs of three or more letters or digits, in any script.
+
+``\\W`` is the Unicode-aware complement of ``\\w`` for ``str`` patterns, so
+``[^\\W_]`` is "word character but not underscore" -- letters and digits. The
+class this replaced was ``[0-9a-z]``, which saw ``panda géant`` as ``{"panda",
+"ant"}`` and ``الباندا العملاقة`` as nothing at all. Digits stay in because
+:func:`_matched_terms` has to be able to match a term like ``1000`` against a
+title; underscore stays out because :func:`_readable_title` spells underscores as
+spaces, so a term carrying one could never match the haystack."""
+
 _STOPWORDS: Final[frozenset[str]] = frozenset(
     {"the", "and", "for", "with", "from", "its", "was", "are", "this", "that"}
 )
@@ -335,8 +349,24 @@ def _by_relevance(
     The robust version of this is the vision pass CLAUDE.md anticipates, where a
     model looks at the candidates and says which ones are pandas.
 
+    Known limit, scripts written without spaces between words: Chinese, Japanese,
+    Thai and Khmer keywords tokenise as one long run, because :data:`_TERM` cannot
+    word-segment them. Measured: "大熊猫吃竹子" ("giant panda eating bamboo") yields
+    the single term ``大熊猫吃竹子`` and a floor of 1, and Commons titles and
+    descriptions are overwhelmingly Latin, so nothing contains that phrase --
+    every candidate is dropped and the slot comes back empty. That is the trade we
+    took: before :data:`_TERM` understood non-ASCII these locales produced *no*
+    terms, which took this guard off entirely and handed the hero slot to whatever
+    Commons ranked first, Saturn included. An empty slot costs the poster a
+    picture; an unfiltered one presents the wrong picture as evidence.
+
     Ties keep the API's ordering. Terms are matched as substrings, so "panda"
     still matches "pandas" and "Panda's".
+
+    The empty-term fallback below is now reached only by a query with no run of
+    three letters or digits anywhere in it -- "3D", punctuation, two-letter tokens
+    -- where there is nothing to rank on and dropping everything would be
+    arbitrary rather than safe.
     """
     terms = _query_terms(query)
     if not terms:

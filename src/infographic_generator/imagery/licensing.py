@@ -17,8 +17,10 @@ from __future__ import annotations
 import dataclasses
 import html
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import Final
+from urllib.parse import urlparse
 
 from infographic_generator.core.models import ImageCredit, Source
 
@@ -52,6 +54,12 @@ instead of a name -- see :func:`_read_author`."""
 MAX_ALT_CHARS: Final = 300
 """Descriptions run to paragraphs; alt text only needs to describe the picture,
 and every extra character is inlined into the composition's HTML."""
+
+MAX_LICENSE_URL_CHARS: Final = 200
+"""A licence URI is one unbreakable token rendered *visibly* into the PNG, so an
+absurd one is a layout bug: a 10 KB ``LicenseUrl`` grew a render from 2400x7380
+to 2400x11338. Every deed URL that exists is under 60 characters, so the cap sits
+where nothing real reaches it -- see :func:`_read_license_url`."""
 
 PLACEHOLDER_AUTHORS: Final[frozenset[str]] = frozenset(
     {
@@ -178,7 +186,7 @@ def read_credit(
     :data:`BLOCKED_FILE_TITLES`, which is a denylist of one and does not
     generalise.
     """
-    if title.strip().lower() in BLOCKED_FILE_TITLES:
+    if _is_blocked(title):
         return None
     if extmetadata_value(meta, "Restrictions") is not None:
         return None
@@ -194,7 +202,7 @@ def read_credit(
     return ImageCredit(
         license=license_id,
         author=author,
-        license_url=extmetadata_value(meta, "LicenseUrl"),
+        license_url=_read_license_url(meta),
         source=Source(url=file_page_url, title=title, publisher="Wikimedia Commons"),
         modified=False,
     )
@@ -203,6 +211,20 @@ def read_credit(
 def with_modified(credit: ImageCredit, *, modified: bool) -> ImageCredit:
     """Return a copy carrying the adaptation flag -- models are frozen."""
     return dataclasses.replace(credit, modified=modified)
+
+
+def _is_blocked(title: str) -> bool:
+    """Whether ``title`` names a denylisted file, in any of its spellings.
+
+    :data:`BLOCKED_FILE_TITLES` holds the canonical form the ``query`` API
+    reports -- NFC, space separated -- so the *input* is folded back to it. A
+    title lifted out of a file page URL uses underscores, and a decomposed
+    ``velká`` (``a`` + U+0301) compares unequal to the composed one character for
+    character, so either spelling would otherwise walk straight past a denylist
+    whose whole job is to be unmissable.
+    """
+    canonical = unicodedata.normalize("NFC", title).replace("_", " ")
+    return canonical.strip().lower() in BLOCKED_FILE_TITLES
 
 
 def _read_license_id(meta: ExtMetadata) -> str | None:
@@ -215,6 +237,39 @@ def _read_license_id(meta: ExtMetadata) -> str | None:
         if license_id is not None:
             return license_id
     return None
+
+
+def _read_license_url(meta: ExtMetadata) -> str | None:
+    """The deed URL, or ``None`` if the value is not plainly a web address.
+
+    Unlike the author field this never gets :func:`truncate`d: a clipped licence
+    URI is a false statement about the licence, so an over-long one is dropped
+    whole. ``license_url`` is optional on the model and a bad one only costs the
+    URL -- an unusable ``license`` still drops the candidate.
+
+    ``http`` and ``https`` with a host, and nothing else. Userinfo is refused
+    rather than stripped, because the credit is rendered as visible text and
+    ``https://user:pw@host/`` would print a password into the PNG; an empty
+    userinfo (``https://@host/``) leaks nothing and stays admitted, matching the
+    research zone's admission gate.
+    """
+    raw = extmetadata_value(meta, "LicenseUrl")
+    if raw is None:
+        return None
+    url = strip_markup(raw)
+    if not url or len(url) > MAX_LICENSE_URL_CHARS:
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        # `urlparse("https://[::1")` raises `Invalid IPv6 URL`, and this module
+        # promises a `None` for unusable metadata, never an exception.
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    return url
 
 
 def _read_author(meta: ExtMetadata) -> str | None:
