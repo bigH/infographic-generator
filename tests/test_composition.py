@@ -82,7 +82,7 @@ Not a malformed string a URL fence would reject -- every label is exactly the
 per-label maximum, so this is well-formed and gets admitted. It is a length attack
 rather than a markup one, and it reaches the page through a door the markup payloads
 above cannot: ``layout.py``'s ``_reference`` titles a source ``source.title or
-_host(source.url)``, and ``_host`` returns an uncapped ``netloc``. An *untitled*
+_host(source.url)``, and ``_host`` returns an uncapped host. An *untitled*
 source therefore writes a 63-character unbroken run into the bibliography."""
 
 # The URL shapes the research harvest can *actually* emit. MARKUP_PAYLOADS above are a
@@ -3128,7 +3128,8 @@ async def test_an_untitled_source_cannot_widen_the_page_with_its_host(
 ) -> None:
     """A reference with no title falls back to its URL host, which nothing caps.
 
-    ``_host`` returns ``urlsplit().netloc`` whole, so a source that arrives without a
+    ``_host`` returns ``urlsplit().hostname`` whole -- uncapped, and 253 characters are
+    legal -- so a source that arrives without a
     title -- which the port permits -- writes its host into ``Reference.title`` and
     thence into ``<li>`` at ``_base.html.j2:47``. ``body`` is ``width: var(--w)`` with
     no ``overflow: hidden``, so an unbreakable run there does not clip: it widens the

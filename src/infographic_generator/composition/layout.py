@@ -862,27 +862,67 @@ def _rank_scale(ordinal: int) -> Scale:
 
 
 def _attribution(source: Source | None) -> str | None:
+    """``None``, not ``""``, when there is nothing to attribute to.
+
+    ``_host`` is empty for a hostless URL, and the three fields ahead of it are
+    already absent by the time it is reached -- so without the ``or None`` this
+    returns the empty string, a third state for a field typed ``str | None`` that
+    every template then has to treat as absent by luck rather than by contract.
+    """
     if source is None:
         return None
-    return _legible_text(source.publisher or source.title or _host(source.url))
+    return _legible_text(source.publisher or source.title or _host(source.url)) or None
 
 
 def _host(url: str) -> str:
-    """The display host, or the whole URL when there is no host to show.
+    """The display host, or empty when the URL has none.
 
     Sanitised because it is the fallback for both a reference title and an
     attribution line: an unsanitised host would undo the cleaning the research zone
     already did to ``Source.publisher`` and ``Source.title``.
     """
-    return _legible_url(_netloc(url) or url)
+    return _legible_url(_authority(url))
 
 
-def _netloc(url: str) -> str:
-    """Empty when the URL has no host, or is malformed enough that parsing raises."""
+def _authority(url: str) -> str:
+    """``https://www.wwf.org.uk/p`` -> ``wwf.org.uk``; empty when there is no host.
+
+    ``.hostname`` and not ``.netloc``, which is the convention the research zone
+    documents at ``_publisher_of``: ``.netloc`` keeps the case and the port, and it
+    also keeps the *userinfo*, so ``https://user:pw@host/x`` printed a password into
+    the PNG -- in the one element the citation apparatus exists to make trustworthy.
+    ``.hostname`` lowercases and drops both. The port is added back rather than
+    dropped, because a host on a non-default port is a different origin and this
+    string is here to be retyped; research drops it instead, which the two can afford
+    to disagree about because ``_attribution`` only reaches a host when the source
+    carried no publisher for research to have built.
+
+    Empty, rather than the whole URL, when there is no host: ``mailto:``, ``data:``
+    and a relative reference all used to print their entire selves into ``.tick``, a
+    10.5px uppercase line, and what they printed was not a host at all.
+    ``_attribution`` reads empty as "nothing to attribute", and a reference keeps its
+    URL in ``.refs__meta`` either way, so nothing verifiable is lost.
+
+    IPv6 is re-bracketed because ``.hostname`` unbrackets it and ``::1:99`` is not an
+    authority anyone can reconstruct. Parsing is guarded because ``urlsplit`` raises
+    on ``https://[::1`` -- the same guard, and the same reason, as
+    ``research/agent.py``'s harvest. ``.port`` is guarded *separately* because it
+    raises on its own for a port outside 0-65535, and one bad port is no reason to
+    drop a good host and with it the whole attribution.
+    """
     try:
-        return urlsplit(url).netloc.removeprefix("www.")
+        split = urlsplit(url)
+        host = (split.hostname or "").removeprefix("www.")
     except ValueError:
         return ""
+    if not host:
+        return ""
+    shown = f"[{host}]" if ":" in host else host
+    try:
+        port = split.port
+    except ValueError:
+        return shown
+    return shown if port is None else f"{shown}:{port}"
 
 
 # --------------------------------------------------------------------------- #

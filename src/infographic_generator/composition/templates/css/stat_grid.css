@@ -57,6 +57,10 @@
   line-height: 1.5;
   color: var(--accent-paper);
 }
+/* The page's biggest number, and on an RTL page it was the page's biggest reordering:
+   `26-84 lb (12-38 kg)` painted as `lb (12-38 kg) 26-84`. `unicode-bidi: plaintext`
+   rather than `direction: ltr`, because a value is researched text in the locale's own
+   script; argued with the measurements at `_chrome.css`'s `.tick`. */
 .row__value {
   margin-top: 6px;
   font-family: var(--display);
@@ -64,6 +68,7 @@
   line-height: 0.94;
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
+  unicode-bidi: plaintext;
 }
 .value--xl { --size: var(--s5); }
 .value--l  { --size: var(--s4); }
@@ -107,7 +112,8 @@
 
 /* --- image bands ---------------------------------------------------- */
 /* Justified strip: each figure's flex-grow is its aspect ratio, so the widths
-   come out proportional and every image lands on the same height without a crop.
+   come out proportional and every image lands on the same height -- uncropped for as
+   long as its declared aspect is the one it really has; see `.band img` below.
    align-self keeps a tall caption from stretching its neighbour's image, and the
    inner flex column keeps the caption inside the figure instead of over it. */
 .band {
@@ -116,6 +122,21 @@
   padding-block: 26px;
 }
 .band figure { display: flex; flex-direction: column; align-self: start; min-width: 0; }
+/* The box is sized from the *declared* size in `ImageAsset`, which `layout._aspect`
+   then clamps to [0.68, 1.85] -- so a true 9:16 portrait is handed a 0.68 box, and the
+   `object-fit: fill` default stretches the photograph to match. Distorting a CC BY work
+   misstates what was licensed, which is nearer an attribution fault than a rag. `cover`
+   crops the overflowing edge instead, leaving every pixel that survives in the
+   photographer's own proportions; `contain` would letterbox, and the figure's flex-grow
+   has already been paid for out of the row's width. Honest metadata makes the box ratio
+   equal the intrinsic one, where `cover` is the identity -- so this only paints on a
+   declaration that is clamped or lying, which is exactly the case `_aspect` cannot fix
+   from metadata alone. */
+.band img { object-fit: cover; }
+/* Byte-identical to `.plates figcaption` in the other two bodies, including the
+   `overflow-wrap` -- this sheet was the one that lacked it, and the same caption string
+   flows into all three. A caption is `work · author · license`, so it inherits every
+   unbreakable token the colophon does. */
 .band figcaption {
   margin-top: 10px;
   font-family: var(--data);
@@ -123,6 +144,8 @@
   letter-spacing: 0.05em;
   line-height: 1.5;
   color: var(--dim-paper);
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 /* --- narrative ------------------------------------------------------ */

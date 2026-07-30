@@ -144,9 +144,12 @@
   grid-column: 1 / -1;
   text-align: end;
 }
-/* Overrides the chrome's `.fitted` -- same specificity, later in the one `<style>` --
-   to put an absolute floor under the width-derived cap. `--fit` has no floor of its
-   own worth the name: `_MIN_FIT_CQW` stops at 3.00cqw, which is 16.92px in the 564px
+/* Restates the chrome's `.fitted`, which now floors at the same 19px -- same
+   specificity, later in the one `<style>`, so this wins, but it no longer *corrects*
+   anything. It stays because the number is justified here, against this body's own
+   columns, and because that is the argument a reader needs when they find it. `--fit`
+   has no floor of its own worth the name: `_MIN_FIT_CQW` stops at 3.00cqw, which is
+   16.92px in the 564px
    stacked column and 7.28px in the 242.52px column this body used to have -- below the
    10.5px credit ticks and unreadable in a PNG. One 62-character value is all it takes,
    and `_descending_caps` then hands that cap to every rank beneath it.
@@ -166,6 +169,9 @@
   letter-spacing: -0.02em;
   overflow-wrap: break-word;
   font-variant-numeric: lining-nums tabular-nums;
+  /* `26-84 lb (12-38 kg)` painted as `lb (12-38 kg) 26-84` on an RTL page. The page's
+     bidi idiom, and why it is not `direction: ltr`, at `_chrome.css`'s `.tick`. */
+  unicode-bidi: plaintext;
 }
 /* Two rungs apart from `.rank--lead`'s below, which is what makes the ordinal-derived
    ladder in `layout._RANK_LADDER` render as five sizes off a four-member `Scale`. */
@@ -249,7 +255,8 @@
 /* --- plates --------------------------------------------------------- */
 /* Justified strip on the ledger band's device: each figure's flex-grow is its
    aspect ratio, so widths come out proportional and every image lands on the same
-   height uncropped. The old auto-fit grid sized its tracks off the captions, and
+   height -- uncropped for as long as its declared aspect is the one it really has, see
+   `.plates img` below. The old auto-fit grid sized its tracks off the captions, and
    a licence URL is one unbreakable token -- hence `overflow-wrap` below. */
 .plates {
   display: flex;
@@ -257,6 +264,17 @@
   padding-block: 26px;
 }
 .plates figure { display: flex; flex-direction: column; align-self: start; min-width: 0; }
+/* The box is sized from the *declared* size in `ImageAsset`, which `layout._aspect`
+   then clamps to [0.68, 1.85] -- so a true 9:16 portrait is handed a 0.68 box, and the
+   `object-fit: fill` default stretches the photograph to match. Distorting a CC BY work
+   misstates what was licensed, which is nearer an attribution fault than a rag. `cover`
+   crops the overflowing edge instead, leaving every pixel that survives in the
+   photographer's own proportions; `contain` would letterbox, and the figure's flex-grow
+   has already been paid for out of the row's width. Honest metadata makes the box ratio
+   equal the intrinsic one, where `cover` is the identity -- so this only paints on a
+   declaration that is clamped or lying, which is exactly the case `_aspect` cannot fix
+   from metadata alone. */
+.plates img { object-fit: cover; }
 .plates figcaption {
   margin-top: 10px;
   font-family: var(--data);
@@ -265,4 +283,5 @@
   line-height: 1.5;
   color: var(--dim-paper);
   overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }

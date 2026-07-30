@@ -92,6 +92,57 @@ li { list-style: none; }
 .rule { height: 6px; background: var(--accent-paper); }
 
 /* --- shared devices ------------------------------------------------ */
+/* `.tick` is the whole `*__src` attribution family -- every one of them is
+   `<p class="X__src tick">` -- so this is where a source line's typography lives, and
+   where it was missing `overflow-wrap`. `_attribution` falls back to a host, a host is
+   uncapped, and a fixed-width `body` with no `overflow: hidden` widens the PNG rather
+   than clipping it: the same failure `_chrome_apparatus.css` documents at length for
+   `.credit`. `anywhere` for the same two reasons as there.
+
+   `research/agent.py` caps a publisher at 48 characters and says in the constant's own
+   docstring that it does so because this rule set no `overflow-wrap`. It now does, so
+   that cap is free to be a cap about publishers rather than about this file.
+
+   `unicode-bidi: plaintext` is this page's bidi idiom for scraped text, and twelve other
+   rules carry it with a pointer back here: `.hero__credit` below, `.row__value`,
+   `.chip__value`, `.rank__value`, `.band figcaption` and both `.plates figcaption`s,
+   `.refs li`, and the four `.credit__*` rules. It is a security control on the same
+   evidence as
+   `_chrome_apparatus.css`'s `.refs__meta`, and it is deliberately *not* the same
+   declaration. On an RTL page a bidi-neutral character at the edge of an LTR run
+   resolves to the paragraph direction and relocates: measured at `ar-EG`, the value
+   `26-84 lb (12-38 kg)` painted as `lb (12-38 kg) 26-84`, and 44 of 75 elements across
+   the three bodies put a character somewhere it was not written.
+
+   `isolate; direction: ltr` -- correct for a URL, and what fixed `.refs__meta` -- fixes
+   all 44 here too, and differs from `plaintext` on 0 of 99 measured elements on a Latin
+   page. It is still the wrong declaration, because none of these fields is a URL. Given
+   genuinely Arabic content in the same elements it corrupted 59 of 75 against
+   `plaintext`'s 0: an Arabic source line's full stop moved to the visual right and read
+   as a *leading* period -- the exact bug it was copied here to fix, mirrored. Asserting
+   `direction: ltr` is a statement of fact about a licence URI and a guess about a
+   photographer's name.
+
+   `plaintext` gives up nothing to get that. The spec defines it as behaving as
+   `isolate` with the base direction taken from the UBA P2/P3 first-strong-character
+   heuristic, so it keeps the element its own bidi paragraph: with an unterminated
+   U+2067 in a sibling -- the Trojan Source spoof -- the two differ on 0 of 69 elements
+   and both repair what `normal` breaks. `isolate` *alone* is not an option: with no
+   base direction it repaired nothing (15 broken elements went to 18).
+
+   The one real cost, measured: chromium resolves `text-align: start`/`end` against the
+   content-derived direction, so a caption beginning in English sits at the LTR edge on
+   an RTL page. 45 of 75 elements move to the left edge where 16 did before. That is
+   ragged, not wrong, and it is strictly less than `direction: ltr`'s 50 moved *plus*
+   the mangled glyphs. If the rag ever matters the fix is markup -- an inner span
+   carrying `plaintext` while the block keeps its alignment -- not `direction`.
+
+   Note when reading a fence over this: `<p>`, `<li>` and `<figcaption>` already compute
+   `isolate` from the UA sheet, so 10 of these 13 rules look half-protected with the
+   declarations deleted. The three that do not are the bare `<span>`s in the colophon,
+   and they were the worst offenders measured. So a fence phrased as "these elements are
+   isolated" passes with the fix removed; only paint order under an RTL paragraph
+   actually moves. */
 .tick {
   font-family: var(--data);
   font-size: 10.5px;
@@ -101,13 +152,35 @@ li { list-style: none; }
   border-inline-start: 2px solid var(--accent-paper);
   padding-inline-start: 9px;
   color: var(--dim-paper);
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 .on-ink .tick { border-inline-start-color: var(--accent-patch); color: var(--dim-patch); }
 
 /* A display string is capped twice: --size is the editorial ceiling for its
    length, --fit is what its column can actually hold. The smaller wins, so
-   narrowing the page shrinks type instead of wrapping it. */
-.fitted { font-size: min(var(--size), var(--fit)); }
+   narrowing the page shrinks type instead of wrapping it -- and the floor is what
+   stops "shrinks" from meaning "disappears". `--fit` is a `cqw`, so it is a
+   proportion of a container and has no lower bound of its own: measured title size
+   was 0.00px at every width from 0 to 120, 1.19px at 150 and 6.67px at 200. A
+   heading that paints at zero pixels is not a small heading, it is a page that
+   silently lost its title.
+
+   19px is the number `ranked_list.css`'s `.rank__value` and `process_flow.css`'s
+   `.chip__value` already floor at, and they floor at it here rather than inventing a
+   second answer. Those two re-declare this whole expression to reach it, which is
+   now a restatement rather than a correction -- see the comments there.
+
+   The floor cannot cost a layout anything above the page's real narrow limit, which
+   is 452px, pinned to the pixel: 450 and 451 overflow, 452 and 453 do not, driven by
+   `_chrome_apparatus.css`'s `.credits` track minimum of 420px plus a 32px gutter. At
+   452 and above `min(--size, --fit)` is far over 19px on every content set, so this
+   term binds only below a width the page already cannot lay out -- where a title
+   that wraps at 19px is the better failure. And it does wrap rather than spill:
+   `.title` carries `overflow-wrap: anywhere` below. (There is no separate legibility
+   floor around 560px; that was measured and refuted -- at 480, 560 and 564 nothing
+   overflows and the smallest type on the page is 10.50px.) */
+.fitted { font-size: max(19px, min(var(--size), var(--fit))); }
 
 /* The display face defaults to old-style figures, which at 100px reads as a row
    of digits at four different heights. Lining and tabular throughout. */
@@ -203,7 +276,14 @@ li { list-style: none; }
    splitting cells over five heroes x widths 560-1400, all 27 repaired, and 0 of
    168 fuzzed real-shaped captions split. It is a *preference*, not a guarantee --
    an adversarial caption can still break inside the token -- so if a split ever
-   reaches the output the fix is markup, not another declaration here. */
+   reaches the output the fix is markup, not another declaration here.
+
+   `overflow-wrap` is not that declaration and does not reopen that argument: `balance`
+   chooses *where* to break a caption that fits, and this chooses whether a token that
+   does not fit breaks at all. Without it a long scraped author ran the caption off the
+   plate; the box is `position: absolute` and `inset-inline: 0`, so unlike `.credit` it
+   cannot widen the PNG -- it overhangs the photograph and paints the credit off the
+   page, which for legally load-bearing text is the same loss by a different route. */
 .hero__credit {
   position: absolute;
   inset-inline: 0;
@@ -216,4 +296,12 @@ li { list-style: none; }
   letter-spacing: 0.06em;
   text-align: end;
   text-wrap: balance;
+  overflow-wrap: anywhere;
+  /* The page's bidi idiom -- see `.tick` above. This is the rule where its alignment
+     cost is visible, because it is the only one of the eleven that sets `text-align`:
+     chromium resolves `end` against the content-derived direction, so on an RTL page a
+     caption beginning in English moves from flush left to flush right -- the edge that
+     Latin text should sit on. Measured: first ink 16.00 in a 16.00-632.00 content box
+     before, 22.16 with no gap at the right after. An Arabic caption does not move. */
+  unicode-bidi: plaintext;
 }

@@ -9,8 +9,8 @@
 .refs { columns: 2; column-gap: 42px; }
 /* `overflow-wrap` belongs on the item and not only on `.refs__meta` below, because
    a reference's *title* can be a URL host: `layout.py`'s `_reference` falls back to
-   `_host(source.url)` when a source has no title, and that host is an uncapped
-   `netloc`. Three maximum-length DNS labels are a legal 203-character host with a
+   `_host(source.url)` when a source has no title, and that host is uncapped.
+   Three maximum-length DNS labels are a legal 203-character host with a
    63-character unbroken run, which set the `<li>` to 1365px inside a 507px column
    and took `body` from 1200 to 1437 -- a fixed-width page with no `overflow: hidden`
    widens the PNG rather than clipping. `anywhere` rather than `break-word` to match
@@ -22,6 +22,11 @@
   font-size: 13.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+  /* The reference's *title* is a bare text node in this `<li>`, so this is the only
+     rule that can protect it -- `.refs__meta` below covers the URL and nothing else.
+     `plaintext` and not `direction: ltr`, because a title is prose in whatever script
+     it was published in; the page's bidi idiom, argued at `_chrome.css`'s `.tick`. */
+  unicode-bidi: plaintext;
 }
 /* `unicode-bidi` and `direction` are a security control, not typography. A URL is
    an LTR string, and on an RTL page its bidi-neutral trailing characters resolve to
@@ -32,7 +37,21 @@
    element its own bidi paragraph, which is what stops an unterminated isolate
    initiator inside a researched title from re-ordering the URL beside it: the
    Trojan Source bibliography spoof. `display: block` happens to do that too, so
-   deleting it must not be able to reopen this. */
+   deleting it must not be able to reopen this.
+
+   `direction: ltr` is right *here* and in `.credit__url`, and nowhere else on the page,
+   because those two elements hold a URL and nothing but a URL -- the one field whose
+   direction is a fact rather than a guess. Every other scraped field uses
+   `unicode-bidi: plaintext` instead; the measurements that separate them are at
+   `_chrome.css`'s `.tick`. Do not "unify" the two.
+
+   Still open, and not fixed by either declaration: this element holds the publisher
+   *and* the URL, and `_legible_text` deliberately keeps U+2066-U+2069 in prose. An
+   unterminated initiator in the publisher therefore reorders the URL beside it inside
+   this element's own bidi paragraph -- `isolate` defends against a neighbour, not
+   against yourself. Measured identical under every variant tried. The fix is markup or
+   a wider sanitiser on a publisher that shares an element with a URL, not another
+   declaration here. */
 .refs__meta {
   display: block;
   unicode-bidi: isolate;
@@ -60,22 +79,59 @@
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 14px 36px;
 }
+/* `overflow-wrap` on the container, because it inherits and the four credit fields
+   below are `<span>`s on two shared lines -- one declaration is the whole colophon
+   rather than four that can drift apart. `anywhere` and not `break-word`, to match
+   `.credit__url` and `.refs li`, and because only `anywhere` also shrinks the
+   min-content contribution the `.credits` tracks are sized against.
+
+   What it prevents is silent corruption of the deliverable, not a rag. `body` is a
+   fixed `--w` with no `overflow: hidden`, so an unbreakable token widens the *PNG*
+   instead of clipping: measured at width 1200 and dsf 2, a 200-character author took
+   `scrollWidth` to 1598 and the file to 3196px wide, 800 characters to 6177, 4000 to
+   30596, and 10240 to a 156426x2248 PNG that still exited 0 -- and on a taller page
+   the same string turned into a `RuntimeError: Unable to capture screenshot`. So it
+   degrades quietly and then fails hard, and either way the page a reader was supposed
+   to be able to check is gone.
+
+   Not a substitute for the imagery zone's `MAX_AUTHOR_CHARS`, and that cap is not a
+   substitute for this: a 160-character author is *within* the cap and still measured
+   68% wider than the page. `credit__license` needs it as much as the author does --
+   `.credit__url` was the only field that stayed at 1200, and only because it already
+   had this declaration three lines down. */
 .credit {
   border-top: 1px solid var(--rule-patch);
   padding-top: 12px;
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
+/* `unicode-bidi` on all four, because it does not inherit the way `overflow-wrap` does
+   -- and these are the elements that most needed it. Three of the four are bare
+   `<span>`s, which is the one tag in this apparatus the UA sheet leaves at
+   `unicode-bidi: normal`, and they were the worst offenders measured: on an RTL page
+   `— Ansel Adams (photographer).` painted as `.— Ansel Adams (photographer)`, and an
+   unterminated isolate initiator in the licence reordered the author beside it.
+   `plaintext` rather than `direction: ltr`: a licence identifier is ASCII in practice
+   but an author's name is whatever it is, and the two spans share one line. The page's
+   bidi idiom and the measurements behind it are at `_chrome.css`'s `.tick`. */
 .credit__license {
   font-family: var(--data);
   font-size: 11.5px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--accent-patch);
+  unicode-bidi: plaintext;
 }
-.credit__work { color: var(--on-patch); }
-.credit__author { color: var(--dim-patch); }
-.credit__adapted { display: block; color: var(--dim-patch); text-transform: none; letter-spacing: 0.04em; }
+.credit__work { color: var(--on-patch); unicode-bidi: plaintext; }
+.credit__author { color: var(--dim-patch); unicode-bidi: plaintext; }
+.credit__adapted {
+  display: block;
+  color: var(--dim-patch);
+  text-transform: none;
+  letter-spacing: 0.04em;
+  unicode-bidi: plaintext;
+}
 /* text-transform is inherited, and a licence URI has to be transcribed by hand
    out of the PNG -- uppercasing it would break it. `unicode-bidi`/`direction` for
    the same reason and on the same evidence as `.refs__meta` above: this is the
