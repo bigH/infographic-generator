@@ -226,7 +226,7 @@ class ProcessFlowBody:
     hero: Figure | None
     steps: Sequence[Step]
     facts: Sequence[Stat]
-    """Surviving facts, rendered as a supporting strip -- the sequence carries
+    """Every fact given, rendered as a supporting strip -- the sequence carries
     the story but a fact handed to us is still a fact we owe the reader."""
     figures: Sequence[Figure]
     """Non-hero images this body places, and therefore credits."""
@@ -338,7 +338,7 @@ def build_process_flow_page(
 def build_ranked_list_page(
     brief: Brief, content: ResearchContent, images: Sequence[ImageAsset]
 ) -> Page:
-    """List order *is* the ranking -- ``ports.py`` already guarantees fact order."""
+    """List order *is* the ranking -- facts are ranked in the order they arrive."""
     hero, rest = _all_figures(images)
     body = RankedListBody(
         hero=hero,
@@ -1002,9 +1002,10 @@ def _all_figures(
     and nothing to defer -- unlike :func:`_imagery`, no asset goes unencoded. A
     ``Path`` whose bytes will not come back fails the page rather than vanishing
     from it: a dropped image is not credited either, so the quiet version loses a
-    licensed image with nothing in the colophon to say so. Both "no images at all"
-    and "no hero among them" come back as ``None`` for the hero slot, the
-    template's cue to lay out text only.
+    licensed image with nothing in the colophon to say so. Only "no images at all"
+    comes back as ``None`` for the hero slot, the template's cue to lay out text
+    only; with no ``HERO`` among them the first asset leads instead -- see
+    :func:`_hero_index`.
     """
     lead, rest = _split_hero(images)
     if lead is None:

@@ -534,6 +534,66 @@ def test_build_census_aspect_is_a_ratio_for_a_fixed_height_brief() -> None:
     assert build_census(brief, content_with(1, 1), ()).aspect == pytest.approx(1.5)
 
 
+NO_AREA_HEIGHTS = (0, -1, -5, -1200)
+"""Heights that reach ``build_census`` unchecked today: ``RenderOptions`` validates
+nothing and ``argparse`` takes ``--height 0`` and ``--height -5`` at face value."""
+
+NO_AREA_WIDTHS = (0, -1, -1200)
+"""The same hole one flag over -- ``--width 0`` is equally unvalidated."""
+
+
+def assert_well_formed(result: ContentCensus) -> None:
+    """What every downstream reader of a census is entitled to assume of it.
+
+    ``aspect`` is the only field that is *computed*, so it is the only one that can
+    be quietly wrong; the rule table never reads it, which is precisely why a
+    nonsense value would travel as far as a model's prompt before anyone noticed.
+    """
+    assert result.aspect is None or (
+        math.isfinite(result.aspect) and result.aspect > 0.0
+    ), f"aspect is not a usable ratio: {result.aspect!r}"
+    assert min(result.fact_count, result.section_count, result.image_count) >= 0
+    assert result.learning_preference in tuple(LearningPreference)
+    assert choose_template(result).template_id in RENDERABLE_TEMPLATE_IDS
+
+
+@pytest.mark.parametrize("height_px", NO_AREA_HEIGHTS)
+def test_build_census_reads_a_height_with_no_area_as_full_page(height_px: int) -> None:
+    """``--height 0`` was a ``ZeroDivisionError`` and ``--height -5`` a cheerful
+    ``-240.0``; neither is a box, so both mean what ``None`` means."""
+    brief = Brief(
+        prompt="a panda", options=RenderOptions(width_px=1200, height_px=height_px)
+    )
+    result = build_census(brief, content_with(3, 1), (image(ImageRole.HERO),))
+    assert result.aspect is None
+    assert (result.fact_count, result.section_count, result.image_count) == (3, 1, 1)
+    assert result.has_hero is True
+    assert_well_formed(result)
+
+
+@pytest.mark.parametrize("width_px", NO_AREA_WIDTHS)
+def test_build_census_reads_a_width_with_no_area_as_full_page(width_px: int) -> None:
+    brief = Brief(
+        prompt="a panda", options=RenderOptions(width_px=width_px, height_px=800)
+    )
+    result = build_census(brief, content_with(1, 1), ())
+    assert result.aspect is None
+    assert_well_formed(result)
+
+
+def test_a_degenerate_page_size_still_resolves_to_a_renderable_spec() -> None:
+    """The whole point: geometry nobody validated must not cost the render."""
+    for width_px, height_px in itertools.product((0, -1, 1200), (0, -5, None, 800)):
+        brief = Brief(
+            prompt="a panda",
+            options=RenderOptions(width_px=width_px, height_px=height_px),
+        )
+        result = build_census(brief, content_with(8, 1), ())
+        assert_well_formed(result)
+        spec = resolve_choice(brief, result, None)
+        assert spec.id in RENDERABLE_TEMPLATE_IDS and spec.blocked_on is None
+
+
 def test_build_census_reads_the_learning_preference_from_extras() -> None:
     brief = brief_with(**{LEARNING_PREFERENCE_EXTRA_KEY: "IMAGE_HEAVY"})
     result = build_census(brief, content_with(1, 1), ())

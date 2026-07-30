@@ -9,8 +9,9 @@ The rule table is the deterministic floor, not a placeholder. A later LLM
 selector implements :class:`TemplateSelector` and its answer is only trusted when
 it names a renderable template and clears :data:`MIN_CONFIDENCE`; otherwise
 :func:`resolve_choice` falls back here, and below here to ``stat_grid``. Nothing
-in this module raises: a bad hint, an unknown id or a blocked id degrades to a
-documented default, because a garbled extras value must not cost a render.
+in this module raises: a bad hint, an unknown id, a blocked id or a page size
+with no area degrades to a documented default, because nothing a requester can
+type should cost a render.
 """
 
 from __future__ import annotations
@@ -69,7 +70,8 @@ class ContentCensus:
     audience: str | None
     locale: str
     aspect: float | None
-    """width/height; ``None`` when ``height_px`` is None (full-page)."""
+    """width/height, always positive; ``None`` when the brief asked for no usable
+    height (full-page) -- which includes a zero or negative one."""
     title: str
     subtitle: str
     summary: str
@@ -96,7 +98,6 @@ def build_census(
 ) -> ContentCensus:
     """Reduce the pipeline's payload to the scalars selection actually reads."""
     options = brief.options
-    height_px = options.height_px
     return ContentCensus(
         fact_count=len(content.facts),
         section_count=len(content.sections),
@@ -104,12 +105,26 @@ def build_census(
         has_hero=any(asset.role is ImageRole.HERO for asset in images),
         audience=brief.audience,
         locale=brief.locale,
-        aspect=None if height_px is None else options.width_px / height_px,
+        aspect=_aspect_of(options.width_px, options.height_px),
         title=content.title,
         subtitle=content.subtitle,
         summary=content.summary,
         learning_preference=learning_preference_of(brief),
     )
+
+
+def _aspect_of(width_px: int, height_px: int | None) -> float | None:
+    """The page's width/height, or ``None`` when it was never usefully asked for.
+
+    ``RenderOptions`` validates nothing and ``--height 0`` / ``--height -5`` reach
+    here intact, so a dimension can arrive non-positive: a box with no area, which
+    describes no geometry at all. That is exactly what ``None`` already means, so
+    it degrades to full-page rather than dividing by zero or handing a selector a
+    ratio of ``-240.000`` as if it were the shape of the page.
+    """
+    if height_px is None or height_px <= 0 or width_px <= 0:
+        return None
+    return width_px / height_px
 
 
 def learning_preference_of(brief: Brief) -> LearningPreference:

@@ -35,8 +35,8 @@ class TemplateSpec:
     """Filename under ``composition/templates/``."""
     image_roles: Sequence[ImageRole] = ()
     """Roles this layout is designed around. Advisory only: it is read in one
-    place, ``agent_composer``'s selection prompt, and no builder filters on it --
-    every asset handed to a body is placed whatever role it carries. ``fafec26``
+    place, ``agent_composer``'s mapping prompt, and no builder filters on it --
+    no asset is kept out of a body for the role it carries. ``fafec26``
     removed the readability filter that used to qualify that sentence: an asset
     that cannot be read now raises ``OSError`` out of every body rather than being
     dropped."""
