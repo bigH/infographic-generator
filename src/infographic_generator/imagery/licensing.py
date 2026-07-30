@@ -59,7 +59,19 @@ MAX_LICENSE_URL_CHARS: Final = 200
 """A licence URI is one unbreakable token rendered *visibly* into the PNG, so an
 absurd one is a layout bug: a 10 KB ``LicenseUrl`` grew a render from 2400x7380
 to 2400x11338. Every deed URL that exists is under 60 characters, so the cap sits
-where nothing real reaches it -- see :func:`_read_license_url`."""
+where nothing real reaches it. Measured against the *raw* value, markup included,
+because that is what has to be bounded before :func:`strip_markup` sees it -- see
+:func:`_read_license_url`."""
+
+MAX_MARKUP_CHARS: Final = 8_000
+"""How much raw markup :func:`strip_markup` is ever handed, via :func:`_plain_text`.
+
+``extmetadata`` is remote attacker-controlled text and ``_TAG`` is quadratic on a
+string of unterminated ``<``: 800 KB of them cost 137 seconds of CPU, 200 KB cost
+8.4, and this bound costs 13 milliseconds. It is 50x :data:`MAX_AUTHOR_CHARS` and
+27x :data:`MAX_ALT_CHARS`, so a real value plus its wrapping anchor is nowhere
+near it; a value over it is dropped rather than clipped, because clipping markup
+invents text -- half a tag is not half a name."""
 
 PLACEHOLDER_AUTHORS: Final[frozenset[str]] = frozenset(
     {
@@ -108,6 +120,11 @@ def strip_markup(raw: str) -> str:
     ``Artist`` and ``ImageDescription`` arrive as HTML fragments -- typically an
     anchor around a username. The core models document every string as plain
     text, never markup, so tags come out and entities get unescaped.
+
+    Only ever shrinks: ``_TAG`` replaces three characters or more with one,
+    ``html.unescape`` has no entity longer than its expansion, and ``_WHITESPACE``
+    collapses. Costs O(n^2) on unterminated ``<``, so pass remote values through
+    :func:`_plain_text`, which bounds them at :data:`MAX_MARKUP_CHARS` first.
     """
     return _WHITESPACE.sub(" ", html.unescape(_TAG.sub(" ", raw))).strip()
 
@@ -152,13 +169,13 @@ def image_description(meta: ExtMetadata) -> str | None:
     """The file's description as plain text, if it has a usable one.
 
     Commons descriptions include junk: one panda photo's is the single character
-    ``0``. Anything without real words is treated as absent so the caller can
-    build a better description than "0".
+    ``0``. Anything without real words -- or too long to be markup around a
+    description at all -- is treated as absent so the caller can build a better
+    description than "0".
     """
-    raw = extmetadata_value(meta, "ImageDescription")
-    if raw is None:
+    description = _plain_text(meta, "ImageDescription")
+    if description is None:
         return None
-    description = strip_markup(raw)
     if len(description) < _MIN_DESCRIPTION_CHARS or not _LETTER.search(description):
         return None
     return truncate(description, MAX_ALT_CHARS)
@@ -169,12 +186,22 @@ def read_credit(
 ) -> ImageCredit | None:
     """Build a fully-populated credit, or ``None`` if the file is not usable.
 
-    Rejects, in order: a licence that will not normalise; any file carrying
-    ``Restrictions`` (trademark, personality rights), which we cannot evaluate;
-    and a file we would be unable to attribute -- every CC BY and CC BY-SA work
-    needs a named author whatever the ``AttributionRequired`` field happens to
-    say, because the licence requires it and the metadata flag is not always
-    populated. CC0 and public-domain files need nobody named.
+    Rejects, in order: a ``file_page_url`` that is not plainly a web address, by
+    the same :func:`_is_usable_web_url` gate the licence URL passes; any file
+    carrying ``Restrictions`` (trademark, personality rights), which we cannot
+    evaluate; a licence that will not normalise; and a file we would be unable to
+    attribute -- every CC BY and CC BY-SA work needs a named author whatever the
+    ``AttributionRequired`` field happens to say, because the licence requires it
+    and the metadata flag is not always populated. CC0 and public-domain files
+    need nobody named.
+
+    An unusable ``file_page_url`` costs the whole candidate, not just its
+    ``source``, which is where it parts company with ``license_url``: ``source``
+    carries the page URL *and* title that CC BY and CC BY-SA attribution must
+    display, so blanking it would publish an under-attributed image, and Commons
+    never legitimately returns userinfo or a non-web scheme in ``descriptionurl``
+    -- a value that does says the response is not the Commons we asked, which is
+    not a field to salvage.
 
     Known gap, accepted for v1: Wikimedia's licence metadata is *self-declared*
     by the uploader on the file description page. Nothing here proves the
@@ -186,6 +213,8 @@ def read_credit(
     :data:`BLOCKED_FILE_TITLES`, which is a denylist of one and does not
     generalise.
     """
+    if not _is_usable_web_url(file_page_url):
+        return None
     if _is_blocked(title):
         return None
     if extmetadata_value(meta, "Restrictions") is not None:
@@ -227,13 +256,27 @@ def _is_blocked(title: str) -> bool:
     return canonical.strip().lower() in BLOCKED_FILE_TITLES
 
 
+def _plain_text(meta: ExtMetadata, key: str) -> str | None:
+    """One ``extmetadata`` value as plain text, or ``None`` if there is none to read.
+
+    The single place remote markup meets :func:`strip_markup`, and therefore the
+    single place its quadratic cost is bounded: a value over
+    :data:`MAX_MARKUP_CHARS` is refused whole, in keeping with this module's habit
+    of dropping metadata it cannot use rather than salvaging a guess from it.
+    """
+    raw = extmetadata_value(meta, key)
+    if raw is None or len(raw) > MAX_MARKUP_CHARS:
+        return None
+    return strip_markup(raw)
+
+
 def _read_license_id(meta: ExtMetadata) -> str | None:
     """Prefer the machine-readable ``License`` slug, fall back to the short name."""
     for key in ("License", "LicenseShortName"):
-        raw = extmetadata_value(meta, key)
-        if raw is None:
+        slug = _plain_text(meta, key)
+        if slug is None:
             continue
-        license_id = normalize_license(strip_markup(raw))
+        license_id = normalize_license(slug)
         if license_id is not None:
             return license_id
     return None
@@ -247,29 +290,39 @@ def _read_license_url(meta: ExtMetadata) -> str | None:
     whole. ``license_url`` is optional on the model and a bad one only costs the
     URL -- an unusable ``license`` still drops the candidate.
 
+    :data:`MAX_LICENSE_URL_CHARS` is applied to the raw value, before
+    :func:`strip_markup`, which both keeps a hostile ``LicenseUrl`` out of a
+    quadratic regex and makes a second check afterwards dead code: stripping
+    markup can only shrink a string.
+
+    What counts as a web address is :func:`_is_usable_web_url`, shared with the
+    file page URL in :func:`read_credit`.
+    """
+    raw = extmetadata_value(meta, "LicenseUrl")
+    if raw is None or len(raw) > MAX_LICENSE_URL_CHARS:
+        return None
+    url = strip_markup(raw)
+    return url if _is_usable_web_url(url) else None
+
+
+def _is_usable_web_url(url: str) -> bool:
+    """Whether ``url`` may be rendered verbatim as a credit's visible text.
+
     ``http`` and ``https`` with a host, and nothing else. Userinfo is refused
     rather than stripped, because the credit is rendered as visible text and
     ``https://user:pw@host/`` would print a password into the PNG; an empty
     userinfo (``https://@host/``) leaks nothing and stays admitted, matching the
     research zone's admission gate.
     """
-    raw = extmetadata_value(meta, "LicenseUrl")
-    if raw is None:
-        return None
-    url = strip_markup(raw)
-    if not url or len(url) > MAX_LICENSE_URL_CHARS:
-        return None
     try:
         parsed = urlparse(url)
     except ValueError:
         # `urlparse("https://[::1")` raises `Invalid IPv6 URL`, and this module
         # promises a `None` for unusable metadata, never an exception.
-        return None
+        return False
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return None
-    if parsed.username or parsed.password:
-        return None
-    return url
+        return False
+    return not (parsed.username or parsed.password)
 
 
 def _read_author(meta: ExtMetadata) -> str | None:
@@ -281,12 +334,14 @@ def _read_author(meta: ExtMetadata) -> str | None:
     truncating the prose -- which keeps the credit rendered and legible, at the
     cost of possibly cutting detail the uploader asked for. Curating the worst
     offenders by hand is the real answer.
+
+    A 500-character essay still truncates. A field past :data:`MAX_MARKUP_CHARS`
+    is not prose any uploader wrote, and drops out of the running entirely.
     """
     candidates = [
         author
         for key in ("Artist", "Attribution", "Credit")
-        if (raw := extmetadata_value(meta, key)) and (author := strip_markup(raw))
-        if not _is_placeholder(author)
+        if (author := _plain_text(meta, key)) and not _is_placeholder(author)
     ]
     if not candidates:
         return None

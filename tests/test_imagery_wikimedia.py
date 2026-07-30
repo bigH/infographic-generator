@@ -21,13 +21,15 @@ from __future__ import annotations
 
 import io
 import random
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import httpx
 import pytest
 from PIL import Image
 
+from infographic_generator.composition import HtmlComposer
 from infographic_generator.core.models import (
     Brief,
     ImageAsset,
@@ -38,6 +40,8 @@ from infographic_generator.core.models import (
 from infographic_generator.imagery import WikimediaImageSourcer, WikimediaSettings
 from infographic_generator.imagery.licensing import (
     MAX_LICENSE_URL_CHARS,
+    MAX_MARKUP_CHARS,
+    image_description,
     normalize_license,
     read_credit,
     strip_markup,
@@ -47,7 +51,11 @@ from infographic_generator.imagery.prepare import (
     hamming_distance,
     prepare,
 )
-from infographic_generator.imagery.wikimedia import _query_terms
+from infographic_generator.imagery.wikimedia import (
+    Candidate,
+    _by_relevance,
+    _query_terms,
+)
 
 ENDPOINT = "https://commons.wikimedia.org/w/api.php"
 BLOCKED_TITLE = "File:Panda velká.jpg"
@@ -148,6 +156,29 @@ def relevant_page(
     return commons_page(page_id, title, download_url=download_url, **overrides)  # type: ignore[arg-type]
 
 
+class UnregisteredQuery(AssertionError):
+    """A ``gsrsearch`` value :class:`FakeCommons` holds no pages for.
+
+    Several tests assert an *absence* -- no assets, nothing downloaded -- and are
+    only meaningful while the query the sourcer sends is the one the fixture
+    stocked candidates under. Answering an unknown key with an empty result set
+    would let a rename, a trailing space, or a query the sourcer rewrote turn
+    every one of those tests green against a fixture that served nothing. So the
+    fixture refuses instead, naming both sides so the drift reads at a glance.
+
+    Deliberately not an :class:`httpx.HTTPError` or a :class:`ValueError`:
+    ``WikimediaImageSourcer.search`` swallows both per slot, which would turn
+    this back into a silently empty slot.
+    """
+
+    def __init__(self, query: str, registered: Iterable[str]) -> None:
+        super().__init__(
+            f"FakeCommons has no pages for gsrsearch={query!r}; registered: "
+            f"{sorted(registered)!r}. Register the query explicitly as [] to "
+            "serve an empty result set."
+        )
+
+
 @dataclass(slots=True)
 class FakeCommons:
     """Serves canned search results and image bytes through a MockTransport."""
@@ -163,10 +194,19 @@ class FakeCommons:
         return self._download(request)
 
     def _search(self, request: httpx.Request) -> httpx.Response:
+        """Serve the pages registered under this ``gsrsearch``, or refuse loudly.
+
+        An unregistered query raises :class:`UnregisteredQuery`. To serve a
+        genuinely empty result set -- "Commons found nothing" -- register the
+        query explicitly as ``[]``; that still answers with the empty 200 the
+        real API sends.
+        """
         self.search_requests.append(request)
         query = request.url.params.get("gsrsearch", "")
         pages = self.pages.get(query)
         if pages is None:
+            raise UnregisteredQuery(query, self.pages)
+        if not pages:
             return httpx.Response(200, json={"batchcomplete": True})
         return httpx.Response(200, json={"query": {"pages": list(pages)}})
 
@@ -256,7 +296,7 @@ async def test_more_than_six_keywords_takes_the_first_six() -> None:
 
 
 async def test_no_keywords_means_no_assets_and_no_requests() -> None:
-    commons = FakeCommons(pages={}, files={})
+    commons = FakeCommons(pages={}, files={})  # nothing registered: any search raises
 
     assert await source(commons, []) == ()
     assert commons.search_requests == []
@@ -304,9 +344,33 @@ async def test_unlicensable_slot_is_skipped_and_other_slots_still_return() -> No
 
 
 async def test_nothing_usable_anywhere_returns_empty_not_junk() -> None:
-    commons = FakeCommons(pages={}, files={})
+    """Both slots search successfully and Commons has nothing: still ``()``."""
+    commons = FakeCommons(pages={"nothing here": [], "also nothing": []}, files={})
 
     assert await source(commons, ["nothing here", "also nothing"]) == ()
+    assert commons.searched == ["nothing here", "also nothing"]
+
+
+async def test_a_query_the_fixture_never_registered_is_an_error_not_an_absence() -> None:
+    """The fixture's own contract, because the absence tests lean on it.
+
+    "Unknown query serves nothing" and "registered-empty query serves nothing"
+    are indistinguishable from the sourcer's side, so a test asserting an absence
+    would keep passing after its query drifted away from the fixture's key. Only
+    the first of the two is an error, and it has to be raised.
+    """
+    commons = FakeCommons(pages={"registered panda": []}, files={})
+
+    with pytest.raises(UnregisteredQuery, match="'drifted panda'.*'registered panda'"):
+        await source(commons, ["drifted panda"])
+
+    assert await source(commons, ["registered panda"]) == ()  # explicitly empty is fine
+
+
+def test_the_unregistered_query_error_survives_the_sourcers_per_slot_rescue() -> None:
+    """``search`` swallows ``(httpx.HTTPError, ValueError)`` so one dud keyword
+    cannot fail the run. A fixture misuse must not be able to hide in there."""
+    assert not issubclass(UnregisteredQuery, (httpx.HTTPError, ValueError))
 
 
 async def test_a_failed_search_does_not_fail_the_run() -> None:
@@ -1130,6 +1194,12 @@ CHINESE_QUERY = "大熊猫吃竹子"
 
 FRENCH_QUERY = "panda géant"
 
+DEVANAGARI_QUERY = "विशाल पांडा"
+""""The giant panda" in Hindi. ``पांडा`` is प + ा + ं + ड + ा -- five characters, of
+which only three are letters -- so a term scanner that stops at a combining mark
+finds nothing three characters long here and the relevance guard switches itself
+off. Two terms, so the floor is ``ceil(2 * 0.75) == 2``, same as Arabic."""
+
 
 def junk_and_one_match(query: str, panda_description: str) -> FakeCommons:
     """Commons' real top hits for a "giant panda" search, plus one true match.
@@ -1207,9 +1277,11 @@ async def test_an_unsegmentable_chinese_keyword_returns_nothing_not_junk() -> No
     commons = junk_and_one_match(
         CHINESE_QUERY, "A giant panda eating bamboo shoots in Sichuan."
     )
+    assert len(commons.pages[CHINESE_QUERY]) == 3  # three candidates were on offer
 
     assets = await source(commons, [CHINESE_QUERY])
 
+    assert commons.searched == [CHINESE_QUERY]  # and the sourcer asked for them
     assert assets == ()
     assert selected_titles(assets) == []
     assert commons.download_requests == []  # not even fetched, let alone returned
@@ -1236,8 +1308,10 @@ async def test_an_accented_keyword_no_longer_matches_on_a_split_stem() -> None:
         },
         files={red: jpeg_bytes(900, 600, seed=53)},
     )
+    assert len(commons.pages[FRENCH_QUERY]) == 1  # a candidate was on offer
 
     assert await source(commons, [FRENCH_QUERY]) == ()
+    assert commons.searched == [FRENCH_QUERY]  # and the sourcer asked for it
     assert commons.download_requests == []
 
 
@@ -1290,48 +1364,433 @@ async def test_a_keyword_with_no_matchable_term_still_admits_its_candidates() ->
     assert selected_titles(await source(commons, ["3D +/-"])) == ["File:Something Else.jpg"]
 
 
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [
-        pytest.param(
-            "giant panda eating bamboo",
-            frozenset({"giant", "panda", "eating", "bamboo"}),
-            id="english-must-not-drift",
-        ),
-        pytest.param(
-            "the panda and its bamboo",
-            frozenset({"panda", "bamboo"}),
-            id="english-stopwords-still-filtered",
-        ),
-        pytest.param(FRENCH_QUERY, frozenset({"panda", "géant"}), id="french-accented"),
-        pytest.param(
-            "большая панда", frozenset({"большая", "панда"}), id="russian-cyrillic"
-        ),
-        pytest.param(
-            ARABIC_QUERY, frozenset({"الباندا", "العملاقة"}), id="arabic"
-        ),
-        pytest.param(
-            CHINESE_QUERY, frozenset({CHINESE_QUERY}), id="chinese-one-unsegmented-run"
-        ),
-        pytest.param(
-            "ジャイアントパンダ",
-            frozenset({"ジャイアントパンダ"}),
-            id="japanese-one-unsegmented-run",
-        ),
-        pytest.param(
-            "ยักษ์แพนด้า", frozenset({"แพนด"}), id="thai-combining-marks-split-the-run"
-        ),
-        pytest.param("1000 pandas", frozenset({"1000", "pandas"}), id="digits-are-terms"),
-        pytest.param(
-            "snake_case term",
-            frozenset({"snake", "case", "term"}),
-            id="underscore-is-not-a-term-character",
-        ),
-        pytest.param("3D +/-", frozenset(), id="nothing-long-enough-to-match-on"),
-    ],
-)
+QUERY_TERM_CASES = [
+    pytest.param(
+        "giant panda eating bamboo",
+        frozenset({"giant", "panda", "eating", "bamboo"}),
+        id="english-must-not-drift",
+    ),
+    pytest.param(
+        "the panda and its bamboo",
+        frozenset({"panda", "bamboo"}),
+        id="english-stopwords-still-filtered",
+    ),
+    pytest.param(FRENCH_QUERY, frozenset({"panda", "géant"}), id="french-accented"),
+    pytest.param("большая панда", frozenset({"большая", "панда"}), id="russian-cyrillic"),
+    pytest.param(ARABIC_QUERY, frozenset({"الباندا", "العملاقة"}), id="arabic"),
+    pytest.param(
+        DEVANAGARI_QUERY, frozenset({"विशाल", "पांडा"}), id="devanagari-vowel-signs-kept"
+    ),
+    pytest.param(
+        "বিশাল পান্ডা", frozenset({"বিশাল", "পান্ডা"}), id="bengali-vowel-signs-kept"
+    ),
+    pytest.param(
+        "ராட்சத பாண்டா", frozenset({"ராட்சத", "பாண்டா"}), id="tamil-vowel-signs-kept"
+    ),
+    pytest.param(
+        "ខ្លាឃ្មុំផេនដា", frozenset({"ខ្លាឃ្មុំផេនដា"}), id="khmer-one-unsegmented-run"
+    ),
+    pytest.param(
+        CHINESE_QUERY, frozenset({CHINESE_QUERY}), id="chinese-one-unsegmented-run"
+    ),
+    pytest.param(
+        "ジャイアントパンダ",
+        frozenset({"ジャイアントパンダ"}),
+        id="japanese-one-unsegmented-run",
+    ),
+    pytest.param(
+        "ยักษ์แพนด้า", frozenset({"ยักษ์แพนด้า"}), id="thai-one-unsegmented-run"
+    ),
+    pytest.param("1000 pandas", frozenset({"1000", "pandas"}), id="digits-are-terms"),
+    pytest.param(
+        "snake_case term",
+        frozenset({"snake", "case", "term"}),
+        id="underscore-is-not-a-term-character",
+    ),
+    pytest.param("3D +/-", frozenset(), id="nothing-long-enough-to-match-on"),
+]
+"""Every script the term scanner is claimed to read, with its exact term set."""
+
+QUERY_TERM_CASE_IDS = frozenset(str(case.id) for case in QUERY_TERM_CASES)
+
+assert len(QUERY_TERM_CASES) >= 15, "the table lost rows; 'every script' is a promise"
+assert {
+    "devanagari-vowel-signs-kept",
+    "bengali-vowel-signs-kept",
+    "tamil-vowel-signs-kept",
+    "khmer-one-unsegmented-run",
+} <= QUERY_TERM_CASE_IDS, "the mark-bearing scripts are the whole point of the scanner"
+# Module scope on purpose: an empty or shrunken parametrize axis *skips*, so the
+# same assertions inside the test below could never fail.
+
+
+@pytest.mark.parametrize(("query", "expected"), QUERY_TERM_CASES)
 def test_query_terms_reads_every_script(query: str, expected: frozenset[str]) -> None:
     """The exact term set, not membership: the English rows are a regression pin so
-    a later widening of :data:`_TERM` cannot quietly alter Latin behaviour, and the
-    unsegmented rows record what a regex genuinely cannot do."""
+    a later widening of :data:`_TERM_CHAR` cannot quietly alter Latin behaviour, the
+    mark-bearing rows pin the syllables the old class cut in half, and the
+    unsegmented rows record what word-segmentation-free scanning genuinely cannot do.
+    """
     assert _query_terms(query) == expected
+
+
+def relevance_candidate(page_id: int, title: str, description: str | None = None) -> Candidate:
+    """A licence-passed candidate, carrying only what :func:`_by_relevance` reads."""
+    return Candidate(
+        page_id=page_id,
+        title=title,
+        download_url=f"https://files.invalid/rank-{page_id}.jpg",
+        mime_type="image/jpeg",
+        credit=ImageCredit(license="CC-BY-SA-4.0"),
+        description=description,
+    )
+
+
+def test_a_devanagari_keyword_drops_the_impostors_instead_of_admitting_all_three() -> None:
+    """The guard is genuinely back on: the list shrinks, three candidates to one.
+
+    With no terms, ``_by_relevance`` returns every candidate in the API's order --
+    Saturn first, in the hero slot. With ``{"विशाल", "पांडा"}`` the floor is 2, the
+    two impostors match zero terms and the panda page matches both.
+    """
+    saturn = relevance_candidate(1, "File:Latest Saturn Portrait.jpg")
+    tortoise = relevance_candidate(2, "File:Galapagos Giant Tortoise.jpg")
+    panda = relevance_candidate(3, "File:Giant panda.jpg", f"{DEVANAGARI_QUERY} की तस्वीर।")
+    candidates = [saturn, tortoise, panda]
+
+    kept = _by_relevance(candidates, DEVANAGARI_QUERY, min_ratio=0.75)
+
+    assert len(candidates) == 3
+    assert len(kept) == 1
+    assert len(kept) < len(candidates)
+    assert kept == [panda]
+    assert saturn not in kept
+    assert tortoise not in kept
+
+
+async def test_a_devanagari_keyword_does_not_put_saturn_in_the_hero_slot() -> None:
+    """End to end, through a real search response: the impostor never downloads."""
+    commons = junk_and_one_match(DEVANAGARI_QUERY, f"{DEVANAGARI_QUERY} की तस्वीर।")
+
+    assets = await source(commons, [DEVANAGARI_QUERY])
+
+    assert len(commons.pages[DEVANAGARI_QUERY]) == 3
+    assert selected_titles(assets) == ["File:Giant panda.jpg"]
+    assert assets[0].role is ImageRole.HERO
+    assert commons.downloaded == ["https://files.invalid/ml-panda.jpg"]
+
+
+# --------------------------------------------------------------------------- #
+# Hostile metadata *lengths*: the quadratic tag regex                         #
+# --------------------------------------------------------------------------- #
+
+HOSTILE_LENGTHS = (25_000, 200_000, 800_000)
+"""Counts of unterminated ``<`` to feed the fields that get markup stripped.
+
+``_TAG`` is ``<[^>]+>``, which backtracks to the end of the string from every
+``<``. Measured before the fix: 0.12 s, 8.4 s and 137 s respectively -- a single
+Commons file could therefore spend over two minutes of CPU. After it: 0.00 s.
+"""
+
+REDOS_BUDGET_SECONDS = 1.0
+"""Well over the ~0 s a bounded read costs, far under the 8.4 s that 200_000
+unterminated ``<`` cost before the fix, so removing a length guard fails loudly
+and a loaded machine cannot make this flaky.
+
+Which row proves what, measured against unfixed code: the *timing* proof is
+carried by :data:`COSTLY_HOSTILE_LENGTHS` alone, because 25_000 ``<`` cost only
+0.13 s unfixed -- inside this budget. At 25_000 only ``Artist`` fails unfixed, and
+on *output* rather than on the clock: 160 ``<`` characters arrive as the credit
+line, where an unfixed ``LicenseUrl`` and ``ImageDescription`` both already read
+as ``None`` (no ``>``, so no tag matches, and what survives has no letter in it).
+So ``Artist`` runs every length and the other two run only the costly ones.
+"""
+
+COSTLY_HOSTILE_LENGTHS = HOSTILE_LENGTHS[1:]
+"""The lengths whose unfixed cost -- 8.5 s and 137 s -- clears the budget outright.
+
+Three orders of magnitude of margin, so dropping 25_000 from the two fields it
+cannot prove anything about loses no coverage of the quadratic path.
+"""
+
+assert len(HOSTILE_LENGTHS) == 3, "the timing rows are the point of this section"
+assert min(HOSTILE_LENGTHS) > MAX_MARKUP_CHARS, "every row must clear the guard"
+assert len(COSTLY_HOSTILE_LENGTHS) == 2, "both over-budget rows, or the clock proves nothing"
+assert min(COSTLY_HOSTILE_LENGTHS) >= 200_000, "under 200_000 the unfixed cost is under a second"
+
+hostile_lengths = pytest.mark.parametrize(
+    "length", HOSTILE_LENGTHS, ids=lambda n: f"{n // 1000}k-opening-tags"
+)
+
+costly_hostile_lengths = pytest.mark.parametrize(
+    "length", COSTLY_HOSTILE_LENGTHS, ids=lambda n: f"{n // 1000}k-opening-tags"
+)
+
+
+def hostile_markup(length: int) -> str:
+    """``length`` unterminated ``<``: the input the tag regex is quadratic on."""
+    return "<" * length
+
+
+def artist_markup_of_length(length: int) -> str:
+    """``<a title="ppp...">Gzen92</a>`` padded to exactly ``length`` characters.
+
+    Real markup around a real name, so its *stripped* length stays 6 however long
+    the raw is -- which is what makes it a probe of where the guard is applied.
+    """
+    prefix, suffix = '<a title="', '">Gzen92</a>'
+    padded = prefix + "p" * (length - len(prefix) - len(suffix)) + suffix
+    assert len(padded) == length
+    return padded
+
+
+def credit_for_artist(artist: str) -> ImageCredit | None:
+    """``read_credit`` over CC BY-SA metadata carrying ``artist`` and nothing else.
+
+    CC BY-SA obliges us to name somebody, so an unusable ``Artist`` costs the
+    whole candidate: ``None`` here means "refused", not "credited anonymously".
+    """
+    return read_credit(
+        {"License": {"value": "cc-by-sa-4.0"}, "Artist": {"value": artist}},
+        file_page_url="https://commons.wikimedia.org/wiki/File:Fine.jpg",
+        title="File:Fine.jpg",
+    )
+
+
+@costly_hostile_lengths
+def test_a_hostile_license_url_is_refused_in_bounded_time(length: int) -> None:
+    """Wall clock, not a proxy: the cap has to be reached before the regex is.
+
+    The clock is the whole assertion here -- unfixed, ``license_url`` reads ``None``
+    at every length -- so only the over-budget lengths run. That the cap applies to
+    the *raw* value is pinned separately, by the test below.
+    """
+    start = time.perf_counter()
+    credit = credit_for_license_url(hostile_markup(length))
+    elapsed = time.perf_counter() - start
+
+    assert credit.license_url is None
+    assert credit.license == "CC-BY-SA-4.0"  # the file itself is still usable
+    assert elapsed < REDOS_BUDGET_SECONDS, f"{length} tags took {elapsed:.3f}s"
+
+
+@hostile_lengths
+def test_a_hostile_artist_is_refused_in_bounded_time(length: int) -> None:
+    """``Artist`` reaches the same regex, and CC BY-SA cannot go unattributed.
+
+    The one field where every length earns its row: unfixed, ``credit`` comes back
+    naming 160 ``<`` characters, so ``credit is None`` fails at 25_000 on output
+    even though 25_000 clears the clock.
+    """
+    start = time.perf_counter()
+    credit = credit_for_artist(hostile_markup(length))
+    elapsed = time.perf_counter() - start
+
+    assert credit is None
+    assert elapsed < REDOS_BUDGET_SECONDS, f"{length} tags took {elapsed:.3f}s"
+
+
+@costly_hostile_lengths
+def test_a_hostile_description_is_refused_in_bounded_time(length: int) -> None:
+    """A refused description is absent, and the caller writes its own alt text.
+
+    Absent unfixed too -- ``<`` is not a letter, so the letter check rejects it
+    anyway -- which leaves the clock as the only assertion, and only the
+    over-budget lengths worth running.
+    """
+    start = time.perf_counter()
+    description = image_description({"ImageDescription": {"value": hostile_markup(length)}})
+    elapsed = time.perf_counter() - start
+
+    assert description is None
+    assert elapsed < REDOS_BUDGET_SECONDS, f"{length} tags took {elapsed:.3f}s"
+
+
+def test_a_raw_license_url_over_the_cap_is_refused_before_it_is_stripped() -> None:
+    """The cap is measured on the raw value: an anchor big enough to hurt goes,
+    even though the URL it wraps would have been fine on its own."""
+    deed = "https://creativecommons.org/licenses/by/4.0/"
+    raw = f'<a rel="license" title="{"p" * MAX_LICENSE_URL_CHARS}" href="/x">{deed}</a>'
+    assert len(raw) > MAX_LICENSE_URL_CHARS
+    assert strip_markup(raw) == deed  # short enough *after* stripping, and refused anyway
+
+    assert credit_for_license_url(raw).license_url is None
+
+
+@pytest.mark.parametrize(
+    ("length", "expected"),
+    [
+        pytest.param(MAX_MARKUP_CHARS, "Gzen92", id="exactly-the-bound"),
+        pytest.param(MAX_MARKUP_CHARS + 1, None, id="one-over"),
+    ],
+)
+def test_an_artist_field_past_the_markup_bound_drops_the_candidate(
+    length: int, expected: str | None
+) -> None:
+    """Dropped whole, not clipped: half a tag is not half a name. Both rows strip
+    to the same six characters, so only the raw length decides."""
+    credit = credit_for_artist(artist_markup_of_length(length))
+
+    assert (credit.author if credit is not None else None) == expected
+
+
+def test_the_markup_bound_leaves_real_metadata_exactly_as_it_was() -> None:
+    """The regression floor: everything the guard must not touch, pinned.
+
+    The essay is the ``Artist``-full-of-prose case :func:`_read_author` documents
+    -- 504 characters, so it truncates to a legible credit rather than vanishing.
+    """
+    deed = "https://creativecommons.org/licenses/by-sa/4.0/"
+    essay = "Photograph by Jane Q. Photographer. " * 14
+    assert len(essay) == 504
+
+    credit = credit_for_artist(f'<a href="/x">{essay}</a>')
+    assert credit is not None
+
+    assert credit_for_license_url(deed).license_url == deed
+    assert credit.author == "Photograph by Jane Q. Photographer. " * 4 + "Photograph by…"
+    assert image_description({"ImageDescription": {"value": f"<p>{essay}</p>"}}) == (
+        "Photograph by Jane Q. Photographer. " * 8 + "Photograph…"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The file page URL: the fifth attribution door into the rendered page         #
+# --------------------------------------------------------------------------- #
+
+PASSWORD = "hunter2"
+"""What must never reach a pixel. ``descriptionurl`` comes from the API just like
+``LicenseUrl`` does, and the composer renders ``source.url`` into the same
+``.credit__url`` element, so userinfo there prints a password into the PNG."""
+
+POISONED_PAGE_URL = f"https://user:{PASSWORD}@commons.wikimedia.org/wiki/File:X.jpg"
+CLEAN_PAGE_URL = "https://commons.wikimedia.org/wiki/File:Fine.jpg"
+
+
+def credit_for_file_page_url(url: str) -> ImageCredit | None:
+    """``read_credit`` over clean CC BY-SA metadata, varying only the file page.
+
+    ``None`` here means the whole candidate is refused -- unlike a refused
+    ``license_url``, which costs the URL alone.
+    """
+    return read_credit(CLEAN_METADATA, file_page_url=url, title="File:Fine.jpg")
+
+
+def credit_text(credit: ImageCredit) -> str:
+    """Every string a credit could print, flattened.
+
+    Deliberately not accepting ``None``: a helper that answered ``""`` for a
+    refused credit turned ``PASSWORD not in credit_text(credit)`` into a
+    tautology wherever it followed ``assert credit is None``.
+    """
+    parts = [credit.license, credit.author, credit.license_url]
+    if credit.source is not None:
+        parts += [credit.source.url, credit.source.title, credit.source.publisher]
+    return " ".join(part for part in parts if part)
+
+
+def test_a_benign_file_page_url_round_trips_verbatim() -> None:
+    """Without this, "always refuse" would pass every rejection test below."""
+    credit = credit_for_file_page_url(CLEAN_PAGE_URL)
+
+    assert credit is not None
+    assert credit.source is not None
+    assert credit.source.url == CLEAN_PAGE_URL
+    assert credit.source.title == "File:Fine.jpg"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param(POISONED_PAGE_URL, id="user-and-password"),
+        pytest.param("https://user@commons.wikimedia.org/wiki/File:X.jpg", id="user-only"),
+        pytest.param(
+            f"https://:{PASSWORD}@commons.wikimedia.org/wiki/File:X.jpg", id="password-only"
+        ),
+        pytest.param("javascript:alert(1)", id="javascript-scheme"),
+        pytest.param("data:text/html,File:X.jpg", id="data-scheme"),
+        pytest.param("ftp://commons.wikimedia.org/wiki/File:X.jpg", id="ftp-scheme"),
+        pytest.param("//commons.wikimedia.org/wiki/File:X.jpg", id="no-scheme"),
+        pytest.param("https:///wiki/File:X.jpg", id="no-hostname"),
+        pytest.param("https://[::1", id="unparseable-ipv6-does-not-raise"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_an_unusable_file_page_url_drops_the_whole_candidate(url: str) -> None:
+    """``source`` carries the page URL *and* title CC BY-SA attribution has to
+    show, so a file page we cannot print is a file we cannot publish."""
+    assert credit_for_file_page_url(url) is None
+
+
+def test_an_empty_userinfo_file_page_url_is_still_admitted() -> None:
+    """``https://@host/x`` leaks nothing -- the licence URL admits it too."""
+    url = "https://@commons.wikimedia.org/wiki/File:Fine.jpg"
+
+    credit = credit_for_file_page_url(url)
+
+    assert credit is not None
+    assert credit.source is not None
+    assert credit.source.url == url
+
+
+POISONED_QUERY = "panda"
+CLEAN_QUERY = "bamboo"
+
+
+def set_description_url(page: Mapping[str, object], url: str) -> None:
+    """Poke one page's ``descriptionurl``: :func:`commons_page` derives it from the
+    title, and a poisoned one is the whole point here."""
+    info = page["imageinfo"]
+    assert isinstance(info, list)
+    info[0]["descriptionurl"] = url
+
+
+def poisoned_and_clean_commons() -> FakeCommons:
+    """Two slots: one file page URL carrying a password, one wholly clean file.
+
+    The clean slot is what keeps the assertions below honest -- "no asset prints
+    the password" is free if nothing is selected at all.
+    """
+    poisoned_file = "https://files.invalid/poisoned.jpg"
+    clean_file = "https://files.invalid/clean.jpg"
+    poisoned = relevant_page(
+        POISONED_QUERY, 1, "File:Poisoned panda.jpg", download_url=poisoned_file
+    )
+    set_description_url(poisoned, POISONED_PAGE_URL)
+    clean = relevant_page(CLEAN_QUERY, 2, "File:Clean bamboo.jpg", download_url=clean_file)
+    return FakeCommons(
+        pages={POISONED_QUERY: [poisoned], CLEAN_QUERY: [clean]},
+        files={
+            poisoned_file: jpeg_bytes(900, 600, seed=71),
+            clean_file: jpeg_bytes(900, 600, seed=72),
+        },
+    )
+
+
+async def test_a_poisoned_file_page_url_never_reaches_a_selected_asset() -> None:
+    commons = poisoned_and_clean_commons()
+
+    assets = await source(commons, [POISONED_QUERY, CLEAN_QUERY])
+
+    assert selected_titles(assets) == ["File:Clean bamboo.jpg"]
+    for asset in assets:
+        assert PASSWORD not in asset.alt_text
+        assert PASSWORD not in credit_text(asset.credit)
+
+
+async def test_a_poisoned_file_page_url_never_reaches_the_rendered_html() -> None:
+    """The end of the road: what the screenshot would actually show a reader."""
+    assets = await source(poisoned_and_clean_commons(), [POISONED_QUERY, CLEAN_QUERY])
+    content = ResearchContent(
+        title="Giant panda",
+        subtitle="Ailuropoda",
+        summary="Giant pandas spend most of their waking hours eating bamboo.",
+        keywords=(POISONED_QUERY, CLEAN_QUERY),
+    )
+
+    brief = Brief(prompt="the giant panda")
+
+    composition = await HtmlComposer().compose(brief, content, assets)
+
+    assert PASSWORD not in composition.html
+    assert "File:Clean bamboo.jpg" in composition.html  # a credit did render

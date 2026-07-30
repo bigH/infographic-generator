@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import groupby
 from typing import TYPE_CHECKING, Final
 
 import httpx
@@ -51,12 +53,13 @@ _ACCEPTED_MIME_TYPES: Final[frozenset[str]] = frozenset(
 """Pre-filter on the API's declared type. The authority on what we actually
 return is :func:`prepare`, which re-derives it from the decoded bytes."""
 
-# TODO: a regex cannot word-segment Chinese, Japanese, Thai or Khmer, so a keyword
-# in one of those scripts collapses to a single unmatchable run and its slot comes
-# back empty -- see the second "Known limit" in :func:`_by_relevance`. The fix is
-# the vision pass CLAUDE.md anticipates, not a wider character class.
-_TERM: Final = re.compile(r"[^\W_]{3,}")
-"""Runs of three or more letters or digits, in any script.
+# TODO: nothing here word-segments Chinese or Japanese -- neither script separates
+# words, and neither spells them with combining marks -- so a keyword in one of them
+# collapses to a single unmatchable run and its slot comes back empty; see the
+# second "Known limit" in :func:`_by_relevance`. The fix is the vision pass
+# CLAUDE.md anticipates, not a wider character class.
+_TERM_CHAR: Final = re.compile(r"[^\W_]")
+"""One letter or digit, in any script -- the base character a term run is built of.
 
 ``\\W`` is the Unicode-aware complement of ``\\w`` for ``str`` patterns, so
 ``[^\\W_]`` is "word character but not underscore" -- letters and digits. The
@@ -65,6 +68,18 @@ class this replaced was ``[0-9a-z]``, which saw ``panda géant`` as ``{"panda",
 :func:`_matched_terms` has to be able to match a term like ``1000`` against a
 title; underscore stays out because :func:`_readable_title` spells underscores as
 spaces, so a term carrying one could never match the haystack."""
+
+_COMBINING_CATEGORIES: Final[frozenset[str]] = frozenset({"Mn", "Mc"})
+"""Non-spacing and spacing combining marks, which :data:`_TERM_CHAR` excludes
+because ``\\w`` does -- and which therefore used to cut every Indic word to
+shreds. ``पांडा`` is प + ा + ं + ड + ा: three letters knitted together by two vowel
+signs and an anusvara, no run of which is three base characters long. Devanagari,
+Bengali, Tamil and Khmer keywords yielded *no* terms at all that way, and no terms
+takes :func:`_by_relevance`'s guard off entirely. Counting marks as part of the run
+they belong to is what keeps ``पांडा`` a term."""
+
+_MIN_TERM_CHARS: Final = 3
+"""Characters per term, marks included -- see :data:`_COMBINING_CATEGORIES`."""
 
 _STOPWORDS: Final[frozenset[str]] = frozenset(
     {"the", "and", "for", "with", "from", "its", "was", "are", "this", "that"}
@@ -349,22 +364,24 @@ def _by_relevance(
     The robust version of this is the vision pass CLAUDE.md anticipates, where a
     model looks at the candidates and says which ones are pandas.
 
-    Known limit, scripts written without spaces between words: Chinese, Japanese,
-    Thai and Khmer keywords tokenise as one long run, because :data:`_TERM` cannot
-    word-segment them. Measured: "大熊猫吃竹子" ("giant panda eating bamboo") yields
-    the single term ``大熊猫吃竹子`` and a floor of 1, and Commons titles and
-    descriptions are overwhelmingly Latin, so nothing contains that phrase --
-    every candidate is dropped and the slot comes back empty. That is the trade we
-    took: before :data:`_TERM` understood non-ASCII these locales produced *no*
-    terms, which took this guard off entirely and handed the hero slot to whatever
-    Commons ranked first, Saturn included. An empty slot costs the poster a
-    picture; an unfiltered one presents the wrong picture as evidence.
+    Known limit, scripts written without spaces between words: a Chinese,
+    Japanese, Thai or Khmer keyword tokenises as one long run, because
+    :func:`_query_terms` does not word-segment. Measured, each yielding a single
+    term and so a floor of 1: 大熊猫吃竹子 ("giant panda eating bamboo"), ยักษ์แพนด้า,
+    ខ្លាឃ្មុំផេនដា. Commons titles and descriptions are overwhelmingly Latin, so nothing
+    contains those phrases, every candidate is dropped and the slot comes back
+    empty. That is the trade we took, and both alternatives were worse: while
+    combining marks broke runs, Thai split into meaningless fragments (``แพนด``)
+    and Devanagari, Bengali, Tamil and Khmer yielded *no* terms at all, which took
+    this guard off entirely and handed the hero slot to whatever Commons ranked
+    first, Saturn included. An empty slot costs the poster a picture; an unfiltered
+    one presents the wrong picture as evidence.
 
     Ties keep the API's ordering. Terms are matched as substrings, so "panda"
     still matches "pandas" and "Panda's".
 
     The empty-term fallback below is now reached only by a query with no run of
-    three letters or digits anywhere in it -- "3D", punctuation, two-letter tokens
+    three term characters anywhere in it -- "3D", punctuation, two-letter tokens
     -- where there is nothing to rank on and dropping everything would be
     arbitrary rather than safe.
     """
@@ -385,8 +402,25 @@ def _match_floor(term_count: int, min_ratio: float) -> int:
 
 
 def _query_terms(query: str) -> frozenset[str]:
-    """The words worth matching on: three or more characters, not filler."""
-    return frozenset(_TERM.findall(query.lower())) - _STOPWORDS
+    """The words worth matching on: three or more characters, not filler.
+
+    A term is a maximal run of letters, digits and the combining marks attached to
+    them, so an Indic syllable stays whole. Composed (NFC) before scanning because
+    the terms get matched against text that is composed: a decomposed ``géant`` is
+    ``g e ́ a n t``, which no composed title contains -- the same trap
+    :func:`~infographic_generator.imagery.licensing._is_blocked` folds away. Case
+    first, then compose, since lowercasing can itself strand a mark (Turkish ``İ``).
+    """
+    folded = unicodedata.normalize("NFC", query.lower())
+    runs = ("".join(chars) for is_term, chars in groupby(folded, _is_term_char) if is_term)
+    return frozenset(run for run in runs if len(run) >= _MIN_TERM_CHARS) - _STOPWORDS
+
+
+def _is_term_char(char: str) -> bool:
+    """Whether ``char`` belongs to a term: a letter or digit, or a mark on one."""
+    if _TERM_CHAR.match(char):
+        return True
+    return unicodedata.category(char) in _COMBINING_CATEGORIES
 
 
 def _matched_terms(candidate: Candidate, terms: frozenset[str]) -> int:
