@@ -18,7 +18,7 @@ flowchart LR
     subgraph ZC["Zone C — Composition (owner C)"]
         C["composition/<br/>Composer.compose"]
     end
-    subgraph ZD["Zone D — Render (owner D)"]
+    subgraph ZD["Zone D — Render (shared)"]
         D["render/<br/>Renderer.render"]
     end
 
@@ -96,8 +96,13 @@ Rules of thumb: no I/O in `core/`; agents own their own retries, timeouts, and A
 propagate as exceptions — the pipeline does no recovery.
 
 Out of scope for v1: a compose -> render -> critique loop (the standard shape for a real layout
-agent). Adding one later changes `Pipeline.run`, not the ports. Also unresolved: whether a composite
-PNG built from CC BY-SA images inherits ShareAlike. Decide it before shipping anything publicly.
+agent). Adding one later changes `Pipeline.run`, not the ports.
+
+Closed, and no longer a blocker: whether a composite PNG built from CC BY-SA images inherits
+ShareAlike. Hiren decided it — the Wikimedia panda images are test fixtures only, and the image
+sources are being replaced wholesale, so no CC BY-SA image is intended for distribution and the
+question has nothing left to bite. The attribution machinery stays exactly as it is: `ImageCredit`,
+the mandatory `license`, and visible rendered attribution are what the replacement sources will need.
 
 ## Verification
 
@@ -106,5 +111,5 @@ uv sync
 uv run playwright install chromium
 uv run python -c "import infographic_generator.core.models"
 uv run pytest
-uv run infographic "the giant panda" -o out.png   # once owner D lands cli.py
+uv run infographic "the giant panda" -o out.png   # end to end -- cli.py has landed
 ```

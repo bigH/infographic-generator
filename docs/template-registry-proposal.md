@@ -260,8 +260,9 @@ What I would suggest, entirely your call:
 wrote here: `49dc67b` grew it between my writing this and the split landing. And my two `layout.py`
 citations in the third bullet were wrong on the day I wrote them — `:142` and `:160` were the `Stat`
 and `Reference` docstrings, and `_imagery` had already read "Choose what to display, then embed only
-that" since `e3dbca9`. The encode-only-what-you-place saving was never missing; see the correction in
-§"What shipped, and where it deviated".)*
+that" since `49dc67b` — that same commit, not `e3dbca9`, which has no `_imagery` in it at all. The
+encode-only-what-you-place saving was never missing; see the correction in §"What shipped, and where
+it deviated".)*
 
 ## Which `core/models.py` fields would have to be added, and why
 
@@ -390,12 +391,12 @@ rewrite `blocked_on` to say what is *actually* missing. Verbatim, the three stri
 to change are at `registry.py:66-70` (`timeline`), `:82-86` (`comparison`) and `:109-113`
 (`quote_spotlight`).
 
-Two things this work did **not** resolve, and neither is yours to decide — both need a human:
-whether a PNG composed from the two `CC-BY-SA-4.0` panda images inherits ShareAlike (parked in
-`CLAUDE.md` and `docs/plan.md`), and the `quote_spotlight` legibility problem — a `BACKGROUND`
-image carries full attribution obligations, and attribution over a busy photo is exactly where
-"visible in the rendered output" quietly stops being true. The second is a reason to answer the
-`Quote` question and the legibility question together.
+One thing this work did **not** resolve, and it is not yours to decide: the `quote_spotlight`
+legibility problem — a `BACKGROUND` image carries full attribution obligations, and attribution
+over a busy photo is exactly where "visible in the rendered output" quietly stops being true. It is
+a reason to answer the `Quote` question and the legibility question together. The ShareAlike
+question that used to stand beside it here is closed; see §"The one question that was Hiren's, and
+is now closed".
 
 ## What we drop from the branch, explicitly
 
@@ -474,9 +475,11 @@ the answer is not "delete one".)*
 - **`quote_spotlight` puts an image behind text.** A `BACKGROUND` image still carries full
   attribution obligations, and attribution over a busy photo is exactly where "visible in the
   rendered output" quietly stops being true. It needs a legibility treatment, not just a slot.
-- **`docs/plan.md` and `CLAUDE.md` both park the ShareAlike question** — whether a PNG composed
-  from the two `CC-BY-SA-4.0` panda images inherits ShareAlike. Six templates multiply the
-  compositions that question applies to; it still needs a human, and it is not mine to answer.
+- **The ShareAlike question is closed, and six templates do not reopen it.** Whether a PNG composed
+  from the two `CC-BY-SA-4.0` panda images inherits ShareAlike was Hiren's call and he made it: the
+  Wikimedia images are test fixtures only and the sources are being replaced wholesale, so nothing
+  CC-BY-SA is intended for distribution. The attribution machinery stays regardless — see
+  §"The one question that was Hiren's, and is now closed".
 
 ## What shipped, and where it deviated
 
@@ -507,9 +510,11 @@ marked:
 - **The companion idea was already true, and I said the opposite.** This bullet used to claim assets
   are "still encoded eagerly" and that the render-time saving was "not realised". Wrong on the day it
   was written. `_imagery` (`layout.py:808-819`) has read *"Choose what to display, then embed only
-  that"* since `e3dbca9`: it splits the hero, slices to `_BAND_CAPACITY` (`= 3`, `layout.py:55`), and
-  only then maps `_figure` — so `to_data_uri` (the single call site, `layout.py:866`) sees at most four
-  assets on `stat_grid` no matter how many arrive, and `build_page`'s docstring says so at `:285-286`.
+  that"* since `49dc67b`, the commit that introduced the function — not `e3dbca9` eight commits earlier,
+  which contains no `_imagery` at all. It splits the hero, slices to `_BAND_CAPACITY` (`= 3`,
+  `layout.py:55`), and only then maps `_figure` — so `to_data_uri` (the single call site,
+  `layout.py:866`) sees at most four assets on `stat_grid` no matter how many arrive, and `build_page`'s
+  docstring says so at `:285-286`.
   **The one asymmetry that survives on purpose** is that `stat_grid` encodes only what it places, so an
   unreadable asset *past* the band's capacity costs nothing and raises nothing, while `_all_figures`
   encodes everything the two newer bodies are handed. Closing that would mean capping their figure
@@ -897,10 +902,17 @@ float. One field was exploitable and the other was one edit away from being expl
 same defect wearing two different amounts of luck.
 
 Both are now coerced at the boundary. `1c44352` added `_css_px` (`layout.py:392-427`) and the
-`None`-tolerant `_css_px_or_none` (`:430-432`), called from `build_chrome` at `:373` and `:388`. They
-**refuse** rather than coerce — `TypeError` naming the field and saying why — and they refuse `bool`
-explicitly despite it being an `int` subclass. `core/` was not touched. Note that this reorders the
-protection: `_css_px` now runs before `_gutter`, so the accidental guard is no longer the operative one.
+`None`-tolerant `_css_px_or_none` (`:430-432`), called from `build_chrome` at `:373` and `:388` — but it
+did not close the sink; **`427fce2` did.** `_css_px` asked `isinstance(value, int)` and returned the
+object unchanged, and an `int` subclass brings its own `__str__` that Jinja's `escape` calls, so `{`,
+`}`, `;` and `/*` walked through the check built to stop them until `_css_px` started returning
+`int(value)`. They **refuse** rather than coerce — **`ValueError`** naming the field and saying why —
+and they refuse `bool` explicitly despite it being an `int` subclass. `ValueError` and not the
+`TypeError` `1c44352` raised, because `ports.py:100-101` declares `Composer` raises `ValueError` and
+`OSError` and nothing else: `TypeError` widened a shared contract without the conversation a `core/`
+change requires, and bought nothing, since `ValueError` was already permitted. `core/` was not touched
+by either commit. Note that this reorders the protection: `_css_px` now runs before `_gutter`, so the
+accidental guard is no longer the operative one.
 Not CLI-reachable either way: `cli.py:60`, `:67` and `:84` declare `--width`/`--height` as `type=int` and
 `--scale` as `type=float`, so `argparse` refuses a non-numeric argument before `RenderOptions` exists.
 The sink was library-API-reachable only. Pinned by `tests/test_composition.py:1341-1370` and `:1400-1424`
@@ -966,11 +978,16 @@ LANCZOS to 8×8, threshold each pixel against the image's own mean:
 
 - **Noise floor: 0.** Two identical-input renders, six template×theme cells, distance 0 in all six.
   Not "small" — zero.
-- **Every realistic perturbation also measured 0.** An `--accent-paper` nudge ~8% lighter (9,619 pixels
-  changed, peak channel delta 9): **0**. A background hue swap touching **41.35%** of the page's pixels:
-  **0**. A body-text colour swap (34,067 pixels, peak delta 48): **0**. The credit line turned red
-  (8,267 pixels, peak delta 135): **0**. A body `font-size` change of 16.5 → 18px, reflowing the page
-  from 2347 to 2357 pixels tall: **0**. DARK repeats of the first three: 0 for all three.
+- **Every realistic perturbation also measured 0.** An `--accent-paper` nudge ~8% lighter (**8,339
+  pixels at peak channel delta 10**): **0**. A background hue swap touching **41%** of the page's
+  pixels: **0**. A body-text colour swap: **0**. The credit line turned red: **0**. A body `font-size`
+  change of 16.5 → 18px, reflowing the page: **0**. DARK repeats of the first three: 0 for all three.
+  *(An earlier revision of this bullet gave the nudge as 9,619 pixels at peak 9, hung pixel counts and
+  peak deltas on the colour swaps, gave the reflow as 2347 → 2357 pixels tall, and put the hue swap at
+  41.35%. Every one of those figures except the 41% appears in no commit, no test and nowhere in `src/` —
+  they were this document's own, the same defect class `75a721a` shipped to purge. The nudge is the
+  8,339-at-peak-10 measurement `tests/test_palette_fence.py:63-64` and `2afd3f2` both record; the colour
+  swaps and the reflow were only ever recorded qualitatively, so that is all they claim here now.)*
 - **The control that ends the argument: `stat_grid`/DARK versus `ranked_list`/DARK — two entirely
   different templates — measured 3.** A real palette regression is 0 bits away from clean; two different
   layouts are 3 bits apart. The signal band sits inside the noise band. Noise floor 0, smallest real
@@ -1121,8 +1138,8 @@ Four things that cost real time to discover and will cost it again.
   places, not the occurrences.
 
 - **`TemplateSpec.image_roles` enforces nothing.** Covered under §"Shape 1" with the measurements. The
-  short version for anyone skimming: it is read once, as prose, in a model prompt, and every readable
-  asset is placed whatever role it carries. Do not build a feature on the assumption that it filters.
+  short version for anyone skimming: it is read once, as prose, in a model prompt, and every asset is
+  placed whatever role it carries. Do not build a feature on the assumption that it filters.
 - **`cqw` resolves against the query container's *content* box, not its track.** This invalidated several
   pixel predictions during the fence work. A predicted 12.2px minimum title size measured 6.55px,
   because 6.55px is `3.00cqw` of `.masthead__text`'s **218.39px content box** and not of the 294.39px
@@ -1131,22 +1148,27 @@ Four things that cost real time to discover and will cost it again.
   reasoning about container query units on paper, subtract the padding first, and expect to be wrong
   until you have measured it in the browser.
 
-## The one question nobody here gets to answer
+## The one question that was Hiren's, and is now closed
 
-**Whether a PNG composed from the two `CC-BY-SA-4.0` panda images inherits ShareAlike is unresolved, it
-is Hiren's, and nothing in this document depends on the answer.**
+**Whether a PNG composed from the two `CC-BY-SA-4.0` panda images inherits ShareAlike is closed, and it
+closed the only way it could — by removing the exposure rather than by settling licence law.** Hiren
+decided it: the Wikimedia images are test fixtures only, and the image sources are being replaced
+wholesale, so no `CC-BY-SA-4.0` image is intended for distribution and there is no distributed composite
+for ShareAlike to reach. Nothing in this document depended on the answer, and nothing depends on it now.
 
-`CLAUDE.md:110` parks it — "Unresolved, and it needs a human — see `docs/plan.md`" — and
-`docs/plan.md:98-100` parks it too, saying only "Decide it before shipping anything publicly". Neither
-resolves it and neither names an owner, so this document names one rather than adding a third parking
-space. Note the cross-reference is one-directional: `CLAUDE.md` points at `docs/plan.md`, and
-`docs/plan.md` does not point back or say a human is required. Worth fixing in whichever file its owner
-prefers; it is not mine to edit.
+`docs/plan.md` records the decision, in place of the "decide it before shipping anything publicly" it
+used to park it under.
 
-Six templates multiply the number of compositions the question applies to, which raises the stakes and
-changes nothing about the answer. One related thing still sits downstream of it: `quote_spotlight` putting
-a `BACKGROUND` image behind text, where "attribution visible in the rendered output" quietly stops being
-true. That is a reason to answer the `Quote` field ask and the legibility question together.
+**The attribution machinery stays, all of it.** ShareAlike was never what it was for: `ImageCredit`'s
+mandatory `license`, attribution rendered visibly in the PNG rather than only stored in JSON, and the
+four rendering sites the per-site floor counts are what *any* licensed source needs, and the replacement
+sources will need them on day one. Do not thin any of it out on the grounds that the licence question
+went away.
+
+One thing that looked downstream of ShareAlike survives it, because it was never really about
+ShareAlike: `quote_spotlight` puts a `BACKGROUND` image behind text, and that is where "attribution
+visible in the rendered output" quietly stops being true — for a CC0 source as much as a CC-BY-SA one.
+That is still a reason to answer the `Quote` field ask and the legibility question together.
 
 **The other one is fixed, and this paragraph used to say otherwise.** An earlier revision recorded
 `.hero__credit` — a *legal* attribution line — as failing WCAG AA on every hero in the pool, quoting
@@ -1169,6 +1191,5 @@ comment. The same commit corrected four figures in `9e2613f`'s own prose that di
 worth noting for its own sake: a commit that fixes a real bug can still ship wrong numbers about it, and
 someone re-measuring is how that gets caught.
 
-I have deliberately not let any recommendation in this document turn on the ShareAlike answer. If one
-appears to, that is a defect in my writing — say so and I will remove the dependency, not resolve the
-question.
+No recommendation in this document ever turned on the ShareAlike answer, which is why the decision
+changes nothing here beyond this section.

@@ -48,12 +48,13 @@ Green tests after a rebase only prove the merge was textually clean. They don't 
 ## Pipeline
 
 ```
-Brief ──▶ Researcher ──▶ ResearchContent ─┐
-                                          ├──▶ Composer ──▶ Composition ──▶ Renderer ──▶ PNG
-         ImageSourcer ──▶ [ImageAsset] ───┘      (HTML)                     (Playwright)
+Brief ──▶ Researcher ──▶ ResearchContent ──▶ ImageSourcer ──▶ [ImageAsset] ──▶ Composer ──▶ Composition ──▶ Renderer ──▶ PNG
+                                                                                            (HTML)          (Playwright)
 ```
 
-Everything is `async`. Data flows through frozen dataclasses in `core/models.py`; each stage is a `Protocol` in `core/ports.py`. Today every stage is a hard-coded panda stub — the real AI agents get dropped in behind the same interfaces.
+Everything is `async`, and **strictly sequential** — image sourcing reads the researched content, and the composer takes brief, content *and* images, so no stage overlaps another. Data flows through frozen dataclasses in `core/models.py`; each stage is a `Protocol` in `core/ports.py`.
+
+The AI-backed stages are written — `LlmResearcher` (`research/agent.py`), `WikimediaImageSourcer` (`imagery/wikimedia.py`), `AgentComposer` (`composition/agent_composer.py`) — but `build_pipeline` in `cli.py` still wires the panda stubs and no CLI flag switches them. Construct the agent yourself to run one.
 
 ## The three key areas
 
@@ -63,22 +64,25 @@ Each owner works in one directory and does not touch the others.
 `async def research(self, brief: Brief) -> ResearchContent`
 
 Turns a prompt into a title, subtitle, facts, and narrative sections. Every attributable fact carries a `Source` — **never invent a URL**. Honour `brief.max_facts`.
-Stub data: `assets/panda/facts.json`. Tests: `tests/test_research.py`.
+Stub data: `assets/panda/facts.json`. Tests: `tests/test_research.py`, `test_research_agent.py`.
 
 ### 2. Images — search & selection → `src/infographic_generator/imagery/`
 `async def source_images(self, brief: Brief, content: ResearchContent) -> Sequence[ImageAsset]`
 
-Finds images that match the facts. Returns 0–6 display-ready assets, significance-first, resized to ≤2000px (this stage owns resizing — the composer inlines whatever it gets, so oversized images blow up render time). `ImageCredit.license` is mandatory.
-Stub data: `assets/panda/*.jpg` + `credits.json`. Tests: `tests/test_imagery.py`.
+Finds images that match the facts. Returns 0–6 display-ready assets, significance-first, resized to ≤2000px **and roughly ≤1 MB encoded** — both bounds are in the `ImageSourcer` docstring in `core/ports.py`, and the second is the one people forget. This stage owns resizing: the composer inlines whatever it gets, so oversized images blow up render time. `ImageCredit.license` is mandatory.
+Only `WikimediaImageSourcer` actually enforces the byte bound (via `imagery/prepare.py`); the `PandaImageSourcer` stub *drops* an over-2000px asset with a warning rather than resampling it.
+Stub data: `assets/panda/*.jpg` + `credits.json`. Tests: `tests/test_imagery.py`, `test_imagery_wikimedia.py`.
 
 ### 3. Composition & rendering → `src/infographic_generator/composition/` and `render/`
 `async def compose(self, brief, content, images) -> Composition`
 `async def render(self, composition: Composition, output_path: Path) -> RenderResult`
 
 Composer builds **self-contained HTML** — inline `<style>`, images as data URIs via `core.encoding.to_data_uri`, zero external requests (the renderer aborts them). Renderer screenshots it with Playwright/chromium.
-Tests: `tests/test_composition.py`, `tests/test_render.py`.
+Tests: `tests/test_composition.py`, `test_render.py` — plus nine more this zone owns, of which two are the non-obvious ones: `test_css_injection.py` (autoescape does **not** protect a `<style>` element — read it before interpolating anything into CSS) and `test_palette_fence.py` (proves the design tokens survive into the PNG — read it before editing a colour token). Also `test_selection.py`, `test_template_bodies.py`, `test_chrome_split.py`, `test_display_geometry.py`, `test_visual_order.py`, `test_source_host.py`, `test_agent_composer.py`.
 
-`render/`, `pipeline.py`, and `cli.py` are the shared zone — no single owner. Coordinate before changing them.
+`render/`, `pipeline.py`, and `cli.py` are the shared zone — no single owner. Coordinate before changing them. Their tests are `tests/test_contracts.py` and `test_pipeline_cli.py`.
+
+The per-zone lists above are a map, not an index: whatever you touch, run the whole suite (`uv run pytest`) before you push.
 
 ## Libraries
 
@@ -86,14 +90,16 @@ Tests: `tests/test_composition.py`, `tests/test_render.py`.
 - **`jinja2`** for templating. **Always `Environment(autoescape=True)`** — it is *not* the default, and research text and image credits are untrusted scraped web content flowing straight into markup.
 - **`httpx`** for HTTP, not `requests`. Use the async client.
 - **`playwright`** (chromium) — async API, matching the async ports.
+- **`pillow`** for decoding, downscaling and re-encoding image bytes — the imagery stage's resize path lives in `imagery/prepare.py`.
 - **`pytest` + `pytest-asyncio`** with `asyncio_mode = "auto"`, so `async def test_...` just works. Prefer property-based tests and real side effects over mocks.
 - **frozen dataclasses**, not pydantic, for the core domain — the spine is `@dataclass(frozen=True, slots=True)` and stays that way.
 
-When the real AI agents get written:
+For the AI-backed stages (already written — see the Pipeline section for where):
 
 - **`anthropic`** SDK. Default to `claude-opus-5`. Thinking is on by default on Opus 5; tune depth with `output_config={"effort": "high"}` rather than a token budget. `temperature`/`top_p`/`top_k` are rejected — steer with prompting.
-- **Structured output** is how research and image-selection results should come back: `client.messages.parse(..., output_format=SomeModel)` → `response.parsed_output`. This is the one place pydantic earns its place; add it as a dep then.
-- **Server-side web search and fetch** (`web_search_20260209`, `web_fetch_20260209`) do the actual web work — no scraping stack needed. Don't also declare `code_execution`; these versions run it internally.
+- **Structured output** is how research and image-selection results should come back: `client.messages.parse(..., output_format=SomeModel)` → `response.parsed_output`. This is the one place pydantic earns its place; it is already a dep.
+  - **But `.parse` is a trap on a call you cannot afford to lose.** `parse_text` in `anthropic/lib/_parse/_response.py` runs `TypeAdapter(...).validate_json` over *every* text block with no `try/except`, and `resources/messages/messages.py` registers that as the request post-parser — so it runs inside the `await`. A narration preamble, a prose refusal or a `max_tokens` truncation raises `ValidationError` **before the response object is bound**, which makes the `stop_reason` check below unreachable exactly when you need it, and throws away the `usage` of a call that may have burned six figures of input tokens. Prefer `messages.create` with a hand-built `output_config` and parse the text yourself, or wrap `.parse` so a non-JSON block is recoverable. `research/agent.py` does the former and explains why in `_output_config` — copy that. `composition/agent_composer.py` does not, and pays for it by degrading to its rule table whenever the model narrates.
+- **Server-side web search and fetch** (`web_search_20260209`, `web_fetch_20260209`) do the actual web work — no scraping stack needed. Don't also declare `code_execution`; these versions run it internally. **Necessary but not sufficient: also pass `allowed_callers=["direct"]`.** With the field omitted it defaults server-side to `["code_execution_20260120"]` and the response comes back with `code_execution` blocks and **not ZDR-eligible** — measured live; see the `_DIRECT_CALLER` note in `research/agent.py`.
 - **Vision** (image content blocks) is the natural way to have a model *look* at candidate images and pick the ones that fit the facts.
 - Handle `stop_reason == "refusal"` before reading `response.content`.
 
@@ -107,7 +113,7 @@ When the real AI agents get written:
 ## Gotchas
 
 - **Image licences are real.** Four of the five panda images carry attribution obligations — two `CC-BY-SA-4.0`, two `CC-BY-2.0`, plus one `CC0-1.0` that does not. Attribution must be *rendered visibly in the output*, not just stored in JSON. `ImageCredit.modified` exists because CC BY-SA requires stating adaptation, and it is `true` on all five: the originals are 2048–6000 px and the fixtures are 1600 px. Trust `credits.json` over this paragraph — the data is authoritative, prose drifts.
-- **Open question:** whether a PNG composed from the two `CC-BY-SA-4.0` images inherits ShareAlike. Unresolved, and it needs a human — see `docs/plan.md`.
+- **Settled:** whether a PNG composed from the two `CC-BY-SA-4.0` images inherits ShareAlike. It no longer matters — Wikimedia is test-fixture-only and the image sources are being replaced wholesale, so no CC-BY-SA image is headed for distribution. The attribution machinery stays regardless; don't reopen this.
 - **A poisoned image is waiting on Wikimedia Commons.** `File:Panda velká.jpg` is tagged CC BY-SA 4.0 "own work" but its EXIF credits `naturepl.com / LYNN M. STONE / WWF`. It's the best-looking forest shot in the pool and will tempt anyone who goes looking. Don't use it. Verify licences on the file description page, never from the filename.
 - **Daily bamboo intake is genuinely contested** across sources (WWF 12–38 kg, Smithsonian 70–100 lb, IUCN up to 12.5 kg — they measure different plant parts). `facts.json` uses WWF's range and says so in `detail`. A future "correction" here is probably not a correction.
 
