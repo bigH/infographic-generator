@@ -551,9 +551,13 @@ only flipped ``<html dir>`` would measure the instrument, not the layout."""
 class Shape:
     """One image slot whose declared pixel size is chosen, not defaulted.
 
-    ``PandaFixture.as_asset`` defaults every fixture to 1600x1066, so a matrix
-    built on the defaults declares one aspect ratio three times over and can
-    prove nothing about shape at all.
+    ``PandaFixture.as_asset`` derives its default size from ``credits.json``,
+    the authoritative record of what each file really is, and all but one of
+    the panda files is 1600x1066 -- so a matrix left on the defaults would hand
+    two of these three slots the same 3:2 ratio and prove nothing about shape.
+    It would also leave the matrix hostage to the asset files rather than
+    stated by the test, which is why every shape declares its own size,
+    including the one that restates its file's real 1600x1600.
     """
 
     asset: ImageAsset
