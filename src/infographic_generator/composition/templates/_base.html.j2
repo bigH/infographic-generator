@@ -46,8 +46,8 @@
     <li>
       {{ reference.title }}
       <span class="refs__meta">
-        {%- if reference.publisher %}{{ reference.publisher }} — {% endif -%}
-        {{ reference.url }}
+        {%- if reference.publisher %}<span class="refs__publisher">{{ reference.publisher }}</span> — {% endif -%}
+        <span class="refs__url">{{ reference.url }}</span>
       </span>
     </li>
     {% endfor %}

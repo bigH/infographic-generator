@@ -1,8 +1,8 @@
-"""Rendered-geometry fences for three defects that made the PNG itself wrong.
+"""Rendered-geometry fences for four defects that made the PNG itself wrong.
 
 Every promise here is about *measured geometry* -- a scroll width, a computed font
 size in pixels, a painted content box -- and not about a declaration existing. That
-distinction is the whole reason this file exists: the three defects below all shipped
+distinction is the whole reason this file exists: the four defects below all shipped
 past a suite that checked a class name, a stylesheet substring or a declared
 attribute, and every one of those checks stayed green while the page came out broken.
 
@@ -30,6 +30,20 @@ attribute, and every one of those checks stayed green while the page came out br
    about 21% to match. Distorting a CC BY work misstates what was licensed, which is
    nearer an attribution fault than a rag.
 
+4. **A bidi fix took the ranked ladder's flush edge away on an RTL page.**
+   ``unicode-bidi: plaintext`` makes an element its own bidi paragraph, and chromium
+   then resolves an inherited ``text-align: end`` against the *content-derived*
+   direction. ``.rank__value`` carries the declaration and inherits ``end`` from
+   ``.rank__figure``, so a Latin figure on an ``ar-EG`` page was pushed to the right of
+   a box it does not fill and its ink-left became a function of its own text width.
+   Measured on the ten-fact fixture: first ink per rank went ``72.00`` ten times to
+   ``331.56 / 408.95 / 435.72 / 457.50`` and ``472.67`` six times at 1200px, and
+   ``38.00`` ten times to ``375.81 / 453.20 / 479.97 / 501.75`` and ``516.92`` six
+   times at 640px. Nothing above the paint can see it -- the DOM, every attribute and
+   every computed value of ``.rank__value`` are identical -- and in a body whose whole
+   premise is that size expresses rank, a column of figures with no shared edge is not
+   a ladder.
+
 The browser machinery -- the module-scoped chromium, ``laid_out``, the fixture
 builders and the body matrix -- is :mod:`tests.test_composition`'s, imported by name
 the way :mod:`tests.test_template_bodies` and :mod:`tests.test_palette_fence` import
@@ -45,10 +59,13 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 
+from infographic_generator.composition import HtmlComposer
 from infographic_generator.core.models import (
+    Composition,
     ImageAsset,
     ImageCredit,
     ImageRole,
+    RenderOptions,
     ResearchContent,
     Source,
     Theme,
@@ -67,6 +84,7 @@ from tests.test_composition import (
     chromium,  # noqa: F401 -- referenced only as a fixture name
     compose_cell,
     laid_out,
+    make_brief,
     make_content,
     make_facts,
 )
@@ -1117,6 +1135,308 @@ async def test_a_lying_declared_size_crops_a_photograph_instead_of_stretching_it
 
 
 # --------------------------------------------------------------------------- #
+# 4. The ranked ladder's flush edge, in both directions
+# --------------------------------------------------------------------------- #
+
+LADDER_BODY: Final = "ranked_list"
+"""The only body with a ladder, and the only one whose display value *inherits* a
+``text-align``. ``.row__value`` and ``.chip__value`` set none and inherit none, so they
+compute the initial ``start`` and every one of them lands on the leading edge of its own
+box: measured at ``ar-EG``, ink-left equals the container's own left edge to 0.00px on
+all of them at 1200px and 640px, so they move together and stay mutually flush. That is
+the ragged-not-wrong cost ``css/_chrome.css``'s ``.tick`` comment documents and accepts.
+``.rank__value`` is different in kind because ``end`` inside a box the figure does not
+fill makes each row's ink-left depend on its own text width."""
+
+
+@dataclass(frozen=True, slots=True)
+class Direction:
+    """One page direction, and the locale that really produces it.
+
+    A locale, never a ``str.replace`` on the composed document: ``layout._direction``
+    is what turns a BCP 47 tag into ``<html dir>``, so this is the lever a real brief
+    pulls. The cell asserts the direction it measured, because an RTL cell that
+    silently rendered an LTR page is green for the wrong reason.
+    """
+
+    dir: str
+    locale: str
+
+    @property
+    def trailing_is_left(self) -> bool:
+        """Which physical edge ``.rank__figure``'s ``text-align: end`` means here."""
+        return self.dir == "rtl"
+
+
+DIRECTIONS: Final = (Direction("ltr", "en-US"), Direction("rtl", "ar-EG"))
+"""Both directions, because the fix is direction-scoped and the failure it must not
+cause is the mirror of the one it repairs. ``[dir="rtl"] .rank__figure { text-align:
+left }`` restores the RTL edge; the same declaration without the attribute would flush
+the *LTR* page left as well and take the shipped ladder off the trailing edge --
+measured 642.25 against 781.56 at 1200px. Only the LTR cell can see that."""
+
+
+@dataclass(frozen=True, slots=True)
+class LadderCase:
+    """One page width, and the grid regime ``.rank__figure`` is in at that width."""
+
+    px: int
+    stacked: bool
+    """``True`` below ``ranked_list.css``'s 880px container query, where the figure is
+    ``grid-column: 1 / -1`` and spans the whole row; ``False`` above it, where it is
+    ``grid-column: 3`` and takes 46%. The defect is present in both and the two are not
+    the same measurement: stacked, the ink was pushed across a full row."""
+
+
+LADDER_CASES: Final = (LadderCase(1200, stacked=False), LadderCase(640, stacked=True))
+"""One width per regime. 1200 is what ships and is where the reported numbers were
+measured; 640 is the width ``ranked_list.css``'s own layout argument is pinned to, and
+the only one of the two where the figure spans the row."""
+
+LADDER_IDS: Final = tuple(
+    f"w{case.px}-{'stacked' if case.stacked else 'three-col'}" for case in LADDER_CASES
+)
+
+FLUSH_TOLERANCE_PX: Final = 0.5
+"""Subpixel slack on a shared edge. Measured with the fix in place, every rank's ink
+sits **exactly** 0.000px from its figure's trailing content edge, in both directions at
+1200, 880, 879, 640 and 452 -- so this is headroom against rounding and nothing else.
+Without the fix the RTL gaps run 259.56-400.67px at 1200 and 337.81-478.92px at 640."""
+
+LADDER_SPREAD_PX: Final = 40.0
+"""How far apart the widest and narrowest rungs must measure for a shared edge to mean
+anything. Ten rungs of equal ink width would share any alignment, including a broken
+one, so flushness would be vacuous. Measured spread on the ten-fact fixture is 137.7px
+(81.7 to 219.4 at ``ar-EG``, 85.1 to 226.2 at ``en-US``) -- the strings are the same
+length by construction and the ``layout._RANK_LADDER`` rungs set them at 27/33/41/50/76
+px, which is what makes them differ."""
+
+STACKED_MIN_SHARE: Final = 0.9
+COLUMN_MAX_SHARE: Final = 0.55
+"""What share of the row's content box the figure takes in each regime -- measured 1.00
+stacked at 640 and 0.46 in column 3 at 1200. Asserted so a moved container-query
+breakpoint cannot quietly collapse both cases into one regime and leave this file
+claiming coverage of two."""
+
+LADDER_JS = """
+() => Array.from(document.querySelectorAll('.rank')).map(row => {
+  const figure = row.querySelector('.rank__figure');
+  const value = figure === null ? null : figure.querySelector('.rank__value');
+  if (value === null) {
+    return {error: 'NO .rank__value INSIDE .rank__figure'};
+  }
+  // The content box, not the border box: `.rank` carries `.gutter`'s padding-inline,
+  // and the edge the ladder is flush to is the edge of the box text can reach.
+  const inner = (el) => {
+    const box = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return {
+      left: box.left + parseFloat(style.paddingLeft)
+        + parseFloat(style.borderLeftWidth),
+      right: box.right - parseFloat(style.paddingRight)
+        - parseFloat(style.borderRightWidth),
+    };
+  };
+  // The glyph run, not the block: `.rank__value` is a full-width `<p>`, so its own
+  // rect is the figure's rect whatever the alignment does. Its rects also include
+  // `.rank__unit`'s, which is why the extremes are taken over all of them.
+  const range = document.createRange();
+  range.selectNodeContents(value);
+  const rects = Array.from(range.getClientRects())
+    .filter(rect => rect.width > 0 || rect.height > 0);
+  if (rects.length === 0) {
+    return {error: 'NO INK'};
+  }
+  const box = inner(figure);
+  const track = inner(row);
+  return {
+    error: null,
+    text: value.textContent.trim().slice(0, 24),
+    font_px: parseFloat(getComputedStyle(value).fontSize),
+    direction: getComputedStyle(figure).direction,
+    ink_left: Math.min(...rects.map(rect => rect.left)),
+    ink_right: Math.max(...rects.map(rect => rect.right)),
+    figure_left: box.left,
+    figure_right: box.right,
+    row_left: track.left,
+    row_right: track.right,
+  };
+})
+"""
+"""Where each rank's glyphs sit inside the box that is supposed to hold them flush.
+
+Every field is a rect or a computed length read off the rendered page. Nothing here
+reads ``text-align``, and that is deliberate: the declaration was *present and correct*
+throughout this defect -- ``.rank__figure`` said ``end`` before the regression and says
+``end`` now -- and what changed is only which physical edge chromium resolved it to."""
+
+
+@dataclass(frozen=True, slots=True)
+class Rung:
+    """One rank's measured figure: its box, its row, and the ink inside it."""
+
+    text: str
+    font_px: float
+    direction: str
+    ink_left: float
+    ink_right: float
+    figure_left: float
+    figure_right: float
+    row_left: float
+    row_right: float
+
+    @property
+    def ink_width(self) -> float:
+        return self.ink_right - self.ink_left
+
+    @property
+    def figure_share(self) -> float:
+        return (self.figure_right - self.figure_left) / (self.row_right - self.row_left)
+
+    def trailing_gap(self, *, trailing_is_left: bool) -> float:
+        """How far the ink sits from the edge ``text-align: end`` should pin it to."""
+        if trailing_is_left:
+            return self.ink_left - self.figure_left
+        return self.figure_right - self.ink_right
+
+    def __str__(self) -> str:
+        return (
+            f"{self.text!r} at {self.font_px:.0f}px, ink "
+            f"{self.ink_left:.2f}-{self.ink_right:.2f} in a figure "
+            f"{self.figure_left:.2f}-{self.figure_right:.2f}"
+        )
+
+
+def read_rung(measured: Mapping[str, object]) -> Rung:
+    error = measured["error"]
+    assert error is None, f"a .rank could not be measured: {error!r}"
+    return Rung(
+        text=_text(measured["text"]),
+        font_px=_number(measured["font_px"]),
+        direction=_text(measured["direction"]),
+        ink_left=_number(measured["ink_left"]),
+        ink_right=_number(measured["ink_right"]),
+        figure_left=_number(measured["figure_left"]),
+        figure_right=_number(measured["figure_right"]),
+        row_left=_number(measured["row_left"]),
+        row_right=_number(measured["row_right"]),
+    )
+
+
+async def compose_directed(
+    direction: Direction, content: ResearchContent, width_px: int
+) -> Composition:
+    """``compose_cell`` with a locale, which it hard-codes to ``en-US``."""
+    return await HtmlComposer(template_id=LADDER_BODY).compose(
+        make_brief(
+            options=RenderOptions(width_px=width_px, theme=THEME),
+            locale=direction.locale,
+        ),
+        content,
+        PANDA_SET,
+    )
+
+
+def describe_rungs(rungs: Sequence[Rung]) -> str:
+    return "\n".join(f"  {rung}" for rung in rungs)
+
+
+@pytest.mark.parametrize("case", LADDER_CASES, ids=LADDER_IDS)
+@pytest.mark.parametrize("direction", DIRECTIONS, ids=[d.dir for d in DIRECTIONS])
+@BROWSER_LOOP
+async def test_the_ranked_ladder_keeps_one_flush_edge_in_either_direction(
+    chromium: Browser, direction: Direction, case: LadderCase
+) -> None:
+    """Every ranked figure's ink starts on the same edge, whichever way the page runs.
+
+    The ladder is a column of numbers of five different sizes, and the only thing that
+    reads it as a column is a shared edge. ``.rank__figure`` asks for that edge in
+    logical terms -- ``text-align: end``, the row's trailing side -- and ``37cf24f``
+    gave ``.rank__value`` ``unicode-bidi: plaintext``, after which chromium resolved the
+    inherited ``end`` against the value's own *content-derived* direction. A Latin
+    figure on an ``ar-EG`` page therefore aligned to the right of a box whose trailing
+    edge is the left, and each rank's ink-left became ``figure right minus its own text
+    width``: measured 72.00 ten times before, then 331.56 / 408.95 / 435.72 / 457.50 and
+    472.67 six times at 1200px, and 38.00 ten times before, then 375.81 / 453.20 /
+    479.97 / 501.75 and 516.92 six times at 640px.
+
+    Both regimes are measured because the figure is a different box in each: below the
+    880px container query it is ``grid-column: 1 / -1`` and spans the row, above it
+    ``grid-column: 3`` and 46% of it. Both directions are measured because the repair is
+    ``[dir="rtl"]``-scoped: the same declaration written unscoped would flush the LTR
+    page left too, and only an LTR cell can see that.
+
+    Three things are asserted together and none of them alone is the fence. The rungs
+    differ in ink width, so a shared edge is a decision rather than an artefact of ten
+    equal-length strings. The figure takes the share of the row its regime says it does,
+    so the two cases really are two regimes. And every rung's ink sits on the trailing
+    content edge of its own figure -- which is the ladder.
+    """
+    composition = await compose_directed(direction, base_content(), case.px)
+
+    async with laid_out(chromium, composition) as page:
+        measured = _rows(await page.evaluate(LADDER_JS))
+    rungs = tuple(read_rung(row) for row in map(_fields, measured))
+
+    where = f"{LADDER_BODY} at {case.px}px, dir={direction.dir}"
+
+    assert len(rungs) == FACT_COUNT, (
+        f"{where}: measured {len(rungs)} .rank rows, expected {FACT_COUNT} -- one per "
+        "fact. A rank went unrendered, so the ladder this cell measures is not the one "
+        f"the fixture supplies. Measured:\n{describe_rungs(rungs)}"
+    )
+    wrong_way = tuple(rung for rung in rungs if rung.direction != direction.dir)
+    assert not wrong_way, (
+        f"{where}: {len(wrong_way)} of {len(rungs)} figures compute direction "
+        f"{wrong_way[0].direction!r}, not {direction.dir!r}. The locale "
+        f"{direction.locale!r} no longer reaches <html dir>, so an RTL cell is "
+        "measuring an LTR page and cannot fail"
+    )
+
+    widths = tuple(rung.ink_width for rung in rungs)
+    spread = max(widths) - min(widths)
+    assert spread >= LADDER_SPREAD_PX, (
+        f"{where}: the widest rung is {max(widths):.1f}px of ink and the narrowest "
+        f"{min(widths):.1f}px, only {spread:.1f}px apart. Under "
+        f"{LADDER_SPREAD_PX:.0f}px the rungs are near enough the same width that they "
+        "would share an edge under any alignment at all, and the flushness asserted "
+        f"below proves nothing. Measured:\n{describe_rungs(rungs)}"
+    )
+
+    shares = tuple(rung.figure_share for rung in rungs)
+    if case.stacked:
+        assert min(shares) >= STACKED_MIN_SHARE, (
+            f"{where}: the figure takes {min(shares):.2f} of the row's content box, "
+            f"under {STACKED_MIN_SHARE:.2f} -- so it is not the stacked "
+            "`grid-column: 1 / -1` regime this case exists to measure. The 880px "
+            "container query has moved and both LADDER_CASES are now the same regime"
+        )
+    else:
+        assert max(shares) <= COLUMN_MAX_SHARE, (
+            f"{where}: the figure takes {max(shares):.2f} of the row's content box, "
+            f"over {COLUMN_MAX_SHARE:.2f} -- so it is not the three-column "
+            "`grid-column: 3` regime this case exists to measure, and the stacked case "
+            "is the only regime this file covers"
+        )
+
+    gaps = tuple(
+        rung.trailing_gap(trailing_is_left=direction.trailing_is_left) for rung in rungs
+    )
+    edge = "left" if direction.trailing_is_left else "right"
+    assert max(map(abs, gaps)) <= FLUSH_TOLERANCE_PX, (
+        f"{where}: the ladder has no flush edge. Each rung's ink sits "
+        f"{min(gaps):.2f}-{max(gaps):.2f}px from the {edge} content edge of its own "
+        f"figure, which is the trailing edge on a {direction.dir} page, so ten figures "
+        f"start at ten different places. Ink-lefts: "
+        f"{[round(rung.ink_left, 2) for rung in rungs]}\n"
+        f"{describe_rungs(rungs)}\n"
+        "`text-align: end` on .rank__figure is resolved against .rank__value's "
+        "content-derived direction, because the value is its own bidi paragraph -- see "
+        "the comment beside `[dir=\"rtl\"] .rank__figure` in ranked_list.css"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # The fixtures, checked without a browser
 # --------------------------------------------------------------------------- #
 
@@ -1137,10 +1457,38 @@ def test_every_axis_in_this_file_is_non_empty() -> None:
             "WIDTH_CASES": WIDTH_CASES,
             "LYING_SHAPES": LYING_SHAPES,
             "LYING_IMAGES": LYING_IMAGES,
+            "LADDER_CASES": LADDER_CASES,
+            "DIRECTIONS": DIRECTIONS,
         }
     )
     empty = sorted(name for name, axis in axes.items() if not axis)
     assert not empty, f"empty axes: {empty}, whose cells would all skip silently"
+
+
+def test_the_ladder_cells_cover_both_regimes_and_both_directions() -> None:
+    """The ladder cells are not parametrized over ``TEMPLATE_IDS``, so the body they
+    measure has to be checked to exist, and each axis has to hold both of its values."""
+    assert LADDER_BODY in TEMPLATE_IDS, (
+        f"{LADDER_BODY!r} is not renderable ({sorted(TEMPLATE_IDS)}), so every ladder "
+        "cell composes a template that does not exist"
+    )
+    regimes = {case.stacked for case in LADDER_CASES}
+    assert regimes == {True, False}, (
+        f"LADDER_CASES covers {[(c.px, c.stacked) for c in LADDER_CASES]}: both grid "
+        "regimes are needed, because .rank__figure is a full-width box below the 880px "
+        "container query and a 46% column above it, and the alignment defect looks "
+        "different in each"
+    )
+    assert {d.dir for d in DIRECTIONS} == {"ltr", "rtl"}, (
+        f"DIRECTIONS covers {[d.dir for d in DIRECTIONS]}: the repair is scoped to "
+        "[dir=rtl], so an rtl-only sweep cannot see an unscoped version flushing the "
+        "shipped LTR page to the wrong edge"
+    )
+    assert all(case.stacked == (case.px < 880) for case in LADDER_CASES), (
+        f"a LADDER_CASE disagrees with ranked_list.css's 880px container query: "
+        f"{[(c.px, c.stacked) for c in LADDER_CASES]}. `.ranks` carries no padding of "
+        "its own, so the container width is the page width"
+    )
 
 
 def test_the_wrap_payloads_can_still_prove_what_they_claim() -> None:

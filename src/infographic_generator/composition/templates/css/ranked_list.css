@@ -144,6 +144,37 @@
   grid-column: 1 / -1;
   text-align: end;
 }
+/* `end` above is an *intent* -- the figure sits on the row's trailing edge -- and it
+   is right for this box in both directions. What it does not survive is
+   `.rank__value`'s `unicode-bidi: plaintext` below: `text-align` inherits, and chromium
+   resolves an inherited `start`/`end` against the *content-derived* direction, so a
+   Latin figure on an RTL page resolves `end` to the right and each rank's ink-left
+   becomes `box right minus its own text width`. Measured at `ar-EG` on the ten-fact
+   fixture, first ink per rank: 72.00 x10 before `37cf24f`, then 331.56 / 408.95 /
+   435.72 / 457.50 / 472.67 x6 at 1200px (figure in column 3), and 38.00 x10 -> 375.81 /
+   453.20 / 479.97 / 501.75 / 516.92 x6 at 640px (figure stacked, full row width). The
+   ladder's premise is a column of figures sharing one edge; it lost that edge in both
+   grid regimes.
+
+   `left` is physical on purpose, in a sheet that otherwise says `end`,
+   `border-inline-start` and `padding-inline`. It is not expressing the intent -- the
+   intent is `end`, one line up, and on an RTL row `end` *is* the left edge. It names
+   the edge the ladder must stay flush to whatever direction a scraped value happens to
+   derive, which is precisely the decision a logical keyword re-makes per element.
+   `text-align: match-parent` on `.rank__value` is the declaration the spec provides for
+   exactly this and chromium does not implement it: measured, the computed value stays
+   `end` and all four ink-lefts are unmoved. Dropping to `start` here is worse than the
+   bug -- it flushes left in *both* directions, taking the LTR page's figures off the
+   trailing edge (measured 642.25 against 781.56 at 1200px). An inner span carrying
+   `plaintext` while the block keeps its alignment -- the remedy `.tick`'s comment
+   offers -- works too, and is a larger change than the defect.
+
+   LTR cannot see this rule: measured ink is identical with and without it at 1200px
+   and 640px, character for character. Specificity settles the placement -- an
+   attribute plus a class beats the bare `.rank__figure` both here and inside the
+   container query at the foot of the sheet -- so it wins wherever it sits, and it sits
+   beside the declaration it corrects rather than at the end of the file. */
+[dir="rtl"] .rank__figure { text-align: left; }
 /* Restates the chrome's `.fitted`, which now floors at the same 19px -- same
    specificity, later in the one `<style>`, so this wins, but it no longer *corrects*
    anything. It stays because the number is justified here, against this body's own

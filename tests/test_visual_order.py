@@ -1,13 +1,15 @@
 """Where the glyphs land on a right-to-left page.
 
-The eleven rules that carry ``unicode-bidi: plaintext`` -- ``.tick``, ``.hero__credit``,
-``.refs li``, the four ``.credit__*`` spans, the three bodies' display values and both
-``figcaption``s -- exist for one reason: on an RTL page a bidi-neutral character at the
-edge of an LTR run resolves to the paragraph direction and *relocates*. Measured at
-``locale="ar-EG"`` before the fix, the value ``26-84 lb (12-38 kg)`` painted as
-``lb (12-38 kg) 26-84``, a licence read ``+v4.0``, a publisher read ``.example.com`` and
-a photographer's credit read ``.— Ansel Adams (photographer)``. 44 of 75 elements across
-the three bodies put a character somewhere it was not written.
+The rules that carry ``unicode-bidi: plaintext`` -- ``.tick``, ``.hero__credit``,
+``.refs li``, ``.refs__publisher``, ``.credit__license`` and the three other
+``.credit__*`` fields, each body's display value, and the ``figcaption`` rules the three
+bodies declare under two selector strings -- exist for one reason: on an RTL page a
+bidi-neutral character at the edge of an LTR run resolves to the paragraph direction and
+*relocates*. Measured at ``locale="ar-EG"`` before the fix, the value
+``26-84 lb (12-38 kg)`` painted as ``lb (12-38 kg) 26-84``, a licence read ``+v4.0``, a
+publisher read ``.example.com`` and a photographer's credit read
+``.— Ansel Adams (photographer)``. 44 of 75 elements across the three bodies put a
+character somewhere it was not written.
 
 Nothing above the paint can see that. The DOM, ``textContent``, every attribute and
 every computed value are identical before and after; only the rects move. So every
@@ -16,7 +18,7 @@ stylesheet, a class name or ``getComputedStyle``. Three traps this file is shape
 around, all of them found by measuring:
 
 * ``<p>``, ``<li>`` and ``<figcaption>`` already compute ``unicode-bidi: isolate`` from
-  the UA stylesheet, so 9 of the 11 selectors look protected with the fix deleted -- and
+  the UA stylesheet, so 9 of the 12 selectors look protected with the fix deleted -- and
   are not. Isolation is not a base direction. A fence phrased as "these elements are
   isolated" passes on a page that reorders 44 elements.
 * Correct Arabic paints as ``reverse(logical)``, so ``visual == logical`` is *false* for
@@ -38,10 +40,18 @@ around, all of them found by measuring:
 
 Companion to ``tests/test_composition.py``'s
 ``test_a_url_on_an_rtl_page_is_painted_in_the_order_it_is_written``, which covers the
-two URL-only selectors (``.refs__meta`` and ``.credit__url``). Those two carry
-``isolate; direction: ltr`` instead, because a URL's direction is a fact. The other
-eleven hold scraped text of unknown script, where it would be a guess -- see the long
-argument above ``.tick`` in ``css/_chrome.css``.
+URL-only selectors -- ``.credit__url`` and, since the bibliography line was split into
+two spans, ``.refs__url``. Those carry ``isolate; direction: ltr`` instead, because a
+URL's direction is a fact. The protected rules hold scraped text of unknown script, where
+it would be a guess -- see the long argument above ``.tick`` in ``css/_chrome.css``.
+
+``.refs__meta`` is neither: it is the container that holds a publisher *and* a URL, and
+under its ``direction: ltr`` an Arabic publisher's trailing full stop painted at the
+visual right of its own words -- the same defect, aimed at the field beside the URL. That
+is section 7, :func:`test_an_arabic_publisher_keeps_its_full_stop_at_its_own_end`. Note
+for whoever owns ``tests/test_composition.py``: its ``URL_SITES`` still names
+``.refs__meta``, whose first child is now an element rather than the URL's text node, so
+that cell measures nothing there until it names ``.refs__url``.
 """
 
 from __future__ import annotations
@@ -208,10 +218,10 @@ def describe(rows: Sequence[Painted]) -> str:
 # --------------------------------------------------------------------------- #
 
 DECLARATION: Final = "unicode-bidi: plaintext;"
-"""The shipped declaration, as the eleven rules spell it."""
+"""The shipped declaration, as the protected rules spell it."""
 
 UNPROTECTED: Final = "unicode-bidi: normal;"
-"""What the eleven rules computed before the fix: the CSS initial value."""
+"""What the protected rules computed before the fix: the CSS initial value."""
 
 AS_A_URL: Final = "unicode-bidi: isolate; direction: ltr;"
 """The declaration that is right for ``.refs__meta`` and ``.credit__url`` and wrong
@@ -219,10 +229,17 @@ here. It repairs the Latin-on-RTL case identically -- 0 difference on 99 measure
 elements -- and corrupts genuinely Arabic content, which is what
 :func:`test_arabic_content_still_paints_right_to_left` exists to catch."""
 
-DECLARATIONS_PER_PAGE: Final = 9
-"""How many of the eleven reach one page: seven from the shared chrome, two from
-whichever body is rendering. Asserted rather than assumed, because a scratch copy whose
-substitution matched nothing is a control that controls for nothing."""
+DECLARATIONS_PER_PAGE: Final = 10
+"""How many copies of the declaration reach one page: eight from the shared chrome, two
+from whichever body is rendering. Asserted rather than assumed, because a scratch copy
+whose substitution matched nothing is a control that controls for nothing.
+
+Eight, not seven, because ``.refs__publisher`` carries it too and is deliberately *not*
+one of the twelve parametrised selectors: it sits inside ``.refs__meta``'s
+``direction: ltr``, so a Latin publisher on an RTL page has nothing that can move there
+and :func:`test_neutralising_the_declaration_reorders_what_each_cell_measures` would be a
+red control over a green truth. The declaration earns its place on Arabic content
+instead, which is what section 7 measures."""
 
 
 def with_declaration(composition: Composition, replacement: str) -> Composition:
@@ -240,9 +257,9 @@ def with_declaration(composition: Composition, replacement: str) -> Composition:
     found = composition.html.count(DECLARATION)
     assert found == DECLARATIONS_PER_PAGE, (
         f"this page composes {found} copies of {DECLARATION!r}, expected "
-        f"{DECLARATIONS_PER_PAGE} -- seven rules from the shared chrome and two from the "
+        f"{DECLARATIONS_PER_PAGE} -- eight rules from the shared chrome and two from the "
         "body. The cell that called this measures its own falsification by substituting "
-        f"{replacement!r} for that string, so a count of 0 means the eleven rules no "
+        f"{replacement!r} for that string, so a count of 0 means the protected rules no "
         "longer carry the declaration this file was written to fence and every control "
         "below is comparing a page against itself"
     )
@@ -361,9 +378,9 @@ FACT_PUBLISHERS: Final = (
 UNPROTECTED_PROSE: Final = "A bear that eats a grass (mostly)."
 """The subtitle, and the only string in this file deliberately left broken.
 
-``.subtitle`` is not one of the eleven and carries no ``unicode-bidi`` of its own, so on
-an RTL page its trailing full stop really does move. That makes it the control for the
-instrument itself -- see
+``.subtitle`` is not one of the protected rules and carries no ``unicode-bidi`` of its
+own, so on an RTL page its trailing full stop really does move. That makes it the control
+for the instrument itself -- see
 :func:`test_the_paint_order_walker_reports_an_element_that_really_does_reorder`."""
 
 
@@ -552,8 +569,11 @@ async def compose_rtl(
 
 
 # --------------------------------------------------------------------------- #
-# The twelve selectors the eleven rules cover
+# The selector strings the protected rules cover
 # --------------------------------------------------------------------------- #
+# There are fewer strings than rules, and exactly one reason why: ``.plates figcaption``
+# is declared in both ``process_flow.css`` and ``ranked_list.css``. Any other gap between
+# the two counts is a rule this file is not measuring.
 
 SHARED_SELECTORS: Final = (
     ".tick",
@@ -564,7 +584,7 @@ SHARED_SELECTORS: Final = (
     ".credit__author",
     ".credit__adapted",
 )
-"""The seven that come from the chrome, so every body renders all of them.
+"""The seven chrome selectors the table covers, so every body renders all of them.
 
 ``.tick`` is the whole ``*__src`` attribution family -- every one is
 ``<p class="X__src tick">`` -- plus the ``Sources`` / ``Image credits`` /
@@ -579,9 +599,9 @@ FIGURE_CAPTIONS: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 """Where each body captions its non-hero figures. ``stat_grid`` calls the row a band and
-the other two call it plates, which is why eleven rules need twelve selector strings:
-``.plates figcaption`` is declared once in ``process_flow.css`` and once in
-``ranked_list.css``."""
+the other two call it plates, which is the whole reason the protected rules outnumber
+their selector strings: ``.plates figcaption`` is declared once in ``process_flow.css``
+and once in ``ranked_list.css``, and every other rule has a string to itself."""
 
 STATIC_ENGLISH: Final = frozenset({".credit__adapted"})
 """The one selector whose entire content is a literal in ``_base.html.j2``.
@@ -589,7 +609,7 @@ STATIC_ENGLISH: Final = frozenset({".credit__adapted"})
 ``adapted from the original`` is written by the template, not scraped, so every
 character in it is strong Latin and *no* bidi algorithm can move any of them: measured
 0 scrambles with the declaration neutralised, with it replaced by ``direction: ltr``,
-and as shipped. Its rule is not pointless -- it is one of the three bare ``<span>``s the
+and as shipped. Its rule is not pointless -- it is one of the bare ``<span>``s the
 UA sheet leaves at ``unicode-bidi: normal``, and the day the phrase becomes localised or
 interpolated it is the only thing standing between a colophon and a reordered one -- but
 it cannot be falsified by paint order today, and pretending otherwise is exactly the
@@ -598,7 +618,11 @@ from the two cells that need content that can move."""
 
 
 def protected_selectors(template_id: str) -> tuple[str, ...]:
-    """The nine rules that reach one page: the shared seven, plus the body's two."""
+    """The protected rules this file measures on one page: the shared chrome selectors,
+    plus the rendering body's own display value and figure caption.
+
+    Not every rule that reaches the page -- ``.refs__publisher`` also does, and is
+    excluded for the reason :data:`DECLARATIONS_PER_PAGE` gives."""
     return (
         *SHARED_SELECTORS,
         BODY_SELECTORS[template_id].value,
@@ -656,9 +680,12 @@ def test_the_selector_table_covers_every_rule_the_fix_touches() -> None:
         f"stale {sorted(measured - expected)}"
     )
     assert len(measured) == 12, (
-        f"expected the eleven protected rules to need twelve selector strings, got "
-        f"{len(measured)}: {sorted(measured)}. Eleven rules, twelve strings, because "
-        "'.plates figcaption' is declared in both process_flow.css and ranked_list.css"
+        f"expected the protected rules to need 12 distinct selector strings, got "
+        f"{len(measured)}: {sorted(measured)}. There is one more rule than string -- "
+        "rules outnumber strings, not the other way round -- because '.plates "
+        "figcaption' is declared in both process_flow.css and ranked_list.css. This "
+        "literal is the only check that the table and the stylesheets have not shrunk "
+        "together: the comparison above it measures the table against itself"
     )
     assert STATIC_ENGLISH <= measured, (
         f"{sorted(STATIC_ENGLISH - measured)} is excluded from the falsifiable cells "
@@ -723,14 +750,14 @@ async def test_the_reported_value_paints_in_the_order_it_is_written(
 async def test_every_protected_selector_paints_in_the_order_it_is_written(
     chromium: Browser, template_id: str, selector: str
 ) -> None:
-    """Scraped Latin text on an RTL page, in all nine rules that reach the page.
+    """Scraped Latin text on an RTL page, in every protected rule the table measures.
 
     The claim is only about paint: for every element this selector matches, the string a
     reader copies out of the PNG is the string the pipeline put in the DOM. The element
     and character counts are asserted alongside it because "no element matched" and "no
     character moved" are the same green cell, and the first one is a bug.
 
-    ``.tick`` is the widest of the nine: it is every fact's and section's ``*__src``
+    ``.tick`` is the widest of them: it is every fact's and section's ``*__src``
     attribution line *and* the three static chrome labels, so its population mixes
     scraped text with literals. That is deliberate -- the labels are what a page has
     when a source carried no publisher, and they have to survive the same rule.
@@ -778,7 +805,7 @@ async def test_neutralising_the_declaration_reorders_what_each_cell_measures(
     replaced by its initial value, and requires the scramble to appear.
 
     So this is not a claim about a stylesheet's contents, and the assertion is still on
-    character rects. What it establishes is that the eleven rules are load-bearing for
+    character rects. What it establishes is that the protected rules are load-bearing for
     the fixtures above: if this cell goes green the sibling cell above it has stopped
     proving anything, whatever the CSS says.
     """
@@ -908,7 +935,7 @@ throughout so the captions stay uniformly right-to-left."""
 async def test_arabic_content_still_paints_right_to_left(
     chromium: Browser, template_id: str, selector: str
 ) -> None:
-    """Genuinely Arabic text in the eleven rules is still painted right-to-left.
+    """Genuinely Arabic text in the protected rules is still painted right-to-left.
 
     This is the cell that chose ``plaintext`` over ``isolate; direction: ltr``, and the
     most valuable one in the file, because the two are indistinguishable on a Latin
@@ -1070,9 +1097,9 @@ async def test_the_paint_order_walker_reports_an_element_that_really_does_reorde
     ``Range`` whose rects came back empty, a sort that lost its comparator would each
     turn this whole file green while the page reordered 44 elements.
 
-    ``.subtitle`` is the control because it is *not* one of the eleven: it carries no
-    ``unicode-bidi`` of its own, so on an RTL page its trailing full stop genuinely
-    relocates -- measured ``A bear that eats a grass (mostly).`` ->
+    ``.subtitle`` is the control because it is *not* one of the protected rules: it
+    carries no ``unicode-bidi`` of its own, so on an RTL page its trailing full stop
+    genuinely relocates -- measured ``A bear that eats a grass (mostly).`` ->
     ``.A bear that eats a grass (mostly)``. It needs no substitution and no scratch copy
     of the HTML; it is the shipped page, painting wrongly, in an element the fix
     deliberately does not cover.
@@ -1101,9 +1128,245 @@ async def test_the_paint_order_walker_reports_an_element_that_really_does_reorde
     assert scrambled, (
         f"the paint-order walker reports every .subtitle on {template_id} as painted "
         f"in written order:\n{describe(measured)}\n"
-        "That element is not one of the eleven and carries no unicode-bidi, so on an "
-        "ar-EG page its trailing full stop must relocate. Reporting no movement means "
-        "either the instrument has stopped measuring -- in which case every other cell "
-        "in this file is vacuously green -- or .subtitle has been given bidi protection "
-        "and this control needs replacing with an element that still lacks it"
+        "That element is not one of the protected rules and carries no unicode-bidi, so "
+        "on an ar-EG page its trailing full stop must relocate. Reporting no movement "
+        "means either the instrument has stopped measuring -- in which case every other "
+        "cell in this file is vacuously green -- or .subtitle has been given bidi "
+        "protection and this control needs replacing with an element that still lacks it"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 7. Two fields on one bibliography line
+# --------------------------------------------------------------------------- #
+
+SUBTREE_ORDER_JS: Final = """(selector) => {
+  const out = [];
+  for (const el of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    const placed = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      for (let i = 0; i < node.length; i++) {
+        const char = node.data[i];
+        if (/\\s/.test(char)) continue;
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const box = range.getBoundingClientRect();
+        placed.push({char: char, left: box.left, top: Math.round(box.top)});
+      }
+    }
+    if (placed.length) out.push(placed);
+  }
+  return out;
+}"""
+"""Every printing character of an element's whole *subtree*, with where it was painted.
+
+:data:`PAINT_ORDER_JS` cannot serve here, and neither can
+``tests/test_composition.py``'s ``VISUAL_ORDER_JS``: both stop at ``.refs__meta``'s own
+text children, which since the split are the ``" — "`` separator and nothing else. A walk
+that reported only the separator would make the cell below vacuous, and a walk that
+insisted on ``el.firstChild`` being a text node would report the element as absent -- so
+the measurement would fail on markup shape rather than on paint, which is the one thing
+this file refuses to assert on.
+
+Coordinates rather than an order, because the claim is about which *edge* of one run a
+character landed on. ``left`` is kept unrounded: neighbouring glyphs here are 6.3px apart
+and the interesting distances are single glyph widths. ``top`` is rounded to identify a
+line box, exactly as the other two walkers round it."""
+
+SEPARATOR: Final = "—"
+"""The em dash ``_base.html.j2`` prints between a publisher and its URL.
+
+The seam the measurement cuts at, and it is a direct text child of ``.refs__meta`` in
+both markup shapes -- before the split and after it -- which is what lets one cell fail
+on geometry when the split is reverted instead of failing on a missing selector. Neither
+an Arabic publisher nor an ASCII URL contains one."""
+
+FULL_STOP: Final = "."
+"""The character that relocates. Bidi-neutral, so at the end of an Arabic run inside an
+LTR paragraph it resolves to LTR and is painted at the run's visual right -- where an
+Arabic reader reads it *first*."""
+
+
+@dataclass(frozen=True, slots=True)
+class Glyph:
+    """One printing character and the left edge of the box it was painted in."""
+
+    char: str
+    left: float
+    top: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetaLine:
+    """One ``.refs__meta``, cut at its separator into the two fields it holds."""
+
+    publisher: tuple[Glyph, ...]
+    separator: Glyph
+    url: tuple[Glyph, ...]
+
+    @property
+    def written(self) -> str:
+        return "".join(glyph.char for glyph in self.glyphs)
+
+    @property
+    def glyphs(self) -> tuple[Glyph, ...]:
+        return (*self.publisher, self.separator, *self.url)
+
+    @property
+    def lines(self) -> int:
+        return len({glyph.top for glyph in self.glyphs})
+
+    @property
+    def words(self) -> tuple[Glyph, ...]:
+        """The publisher without its trailing character."""
+        return self.publisher[:-1]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.written!r}: stop at x={self.publisher[-1].left:.2f}, its words at "
+            f"x={min(g.left for g in self.words):.2f}.."
+            f"{max(g.left for g in self.words):.2f}, separator at "
+            f"x={self.separator.left:.2f}, url from "
+            f"x={min(g.left for g in self.url):.2f}"
+        )
+
+
+def _glyphs(measured: object) -> tuple[tuple[Glyph, ...], ...]:
+    """Untyped JSON from the browser into the type the assertions are written against."""
+    return tuple(
+        tuple(
+            Glyph(
+                char=_text(_fields(glyph)["char"]),
+                left=_number(_fields(glyph)["left"]),
+                top=int(_number(_fields(glyph)["top"])),
+            )
+            for glyph in _rows(row)
+        )
+        for row in _rows(measured)
+    )
+
+
+async def glyph_rows(page: Page, selector: str) -> tuple[tuple[Glyph, ...], ...]:
+    return _glyphs(await page.evaluate(SUBTREE_ORDER_JS, selector))
+
+
+def cut_at_separator(row: Sequence[Glyph]) -> MetaLine | None:
+    """One element's glyphs as publisher / separator / URL, or ``None`` if they are not.
+
+    ``None`` rather than a guess, and the cell below asserts that no row produced one:
+    a reference that stopped printing a publisher would otherwise quietly shrink the
+    population being measured to zero and pass. Two glyphs are required before the seam,
+    because a one-character publisher is a run with no interior to have an end of.
+    """
+    seams = [index for index, glyph in enumerate(row) if glyph.char == SEPARATOR]
+    if len(seams) != 1:
+        return None
+    (seam,) = seams
+    if seam < 2 or seam == len(row) - 1:
+        return None
+    return MetaLine(
+        publisher=tuple(row[:seam]), separator=row[seam], url=tuple(row[seam + 1 :])
+    )
+
+
+def describe_lines(lines: Sequence[MetaLine]) -> str:
+    return "\n".join(f"    {line}" for line in lines)
+
+
+@BROWSER_LOOP
+@BODIES
+async def test_an_arabic_publisher_keeps_its_full_stop_at_its_own_end(
+    chromium: Browser, template_id: str
+) -> None:
+    """An Arabic publisher beside an ASCII URL, in the one element that holds both.
+
+    ``.refs__meta`` carries ``direction: ltr`` because the line it sets is a URL's, and
+    for a long time it also carried the publisher inside that same paragraph. A publisher
+    is prose in whatever script it was published in: an Arabic one is a right-to-left run
+    inside an LTR paragraph, so its trailing full stop -- bidi-neutral, between an Arabic
+    run and the Latin URL that follows -- resolved to the paragraph's direction and was
+    painted at the *right* end of its own words, where an Arabic reader reads it first.
+    Measured on :data:`ARABIC_PUBLISHERS` before the split, the stop sat at x=716.05 with
+    the publisher's own letters at x=621..709.73; after it, at x=621 with the letters at
+    x=627.30..716.03. A leading period in a bibliography is the ``/https://...`` defect
+    of commit ``27ec41a`` mirrored, on the field printed next to it.
+
+    Nothing above the paint can see either state: the DOM text, ``textContent`` and every
+    computed value are identical, and a fence that asserted "the publisher's span
+    declares ``unicode-bidi: plaintext``" would have passed on the mixed span too, since
+    there was no span to interrogate. So the claim here is geometry:
+
+    * the publisher's trailing stop is painted left of every letter it follows -- the
+      run's own end, in the direction the run is read;
+    * the publisher, the separator and the URL are painted in that order across the line,
+      which is what the container's ``direction: ltr`` is for and what the split must not
+      have changed.
+
+    The URL's own trailing-neutral case is not measured here, deliberately: this fixture's
+    URLs end in a letter, so a claim about them would be vacuous. It belongs to
+    ``tests/test_composition.py``'s ``URL_SITES`` cell -- see this module's docstring.
+
+    No images: the bibliography is chrome, and encoding four JPEGs into three pages buys
+    this cell nothing.
+    """
+    composition = await compose_rtl(template_id, arabic_content(), ())
+
+    async with laid_out(chromium, composition) as page:
+        rows = await glyph_rows(page, ".refs__meta")
+
+    assert rows, (
+        f".refs__meta matched no element with text on {template_id}, so this cell "
+        "measured nothing. The bibliography is shared chrome, so a page without one is "
+        "a page that stopped citing its sources"
+    )
+    lines = [line for line in map(cut_at_separator, rows) if line is not None]
+    assert len(lines) == len(rows), (
+        f"{len(rows) - len(lines)} of {len(rows)} .refs__meta elements on {template_id} "
+        f"do not hold exactly one {SEPARATOR!r} with text on both sides, so the "
+        "measurement cannot say which glyphs are the publisher's. Either a reference "
+        "lost its publisher or the separator changed: "
+        f"{[''.join(g.char for g in row) for row in rows]}"
+    )
+    stopless = [line for line in lines if line.publisher[-1].char != FULL_STOP]
+    assert not stopless, (
+        f"{len(stopless)} of {len(lines)} publishers on {template_id} do not end in "
+        f"{FULL_STOP!r}, so they carry nothing a bidi paragraph could relocate and this "
+        f"cell would be green with the split reverted:\n{describe_lines(stopless)}"
+    )
+    wrapped = [line for line in lines if line.lines != 1]
+    assert not wrapped, (
+        f"{len(wrapped)} of {len(lines)} .refs__meta elements on {template_id} wrap, and "
+        "'which edge of the run' is a within-line claim. Shorten the Arabic fixtures or "
+        f"widen the column:\n{describe_lines(wrapped)}"
+    )
+
+    leading = [
+        line
+        for line in lines
+        if line.publisher[-1].left > min(g.left for g in line.words)
+    ]
+    assert not leading, (
+        f"{len(leading)} of {len(lines)} Arabic publishers on {template_id} paint their "
+        f"trailing {FULL_STOP!r} to the right of their own words:\n"
+        f"{describe_lines(leading)}\n"
+        "An Arabic reader starts at the right, so that full stop is read as a leading "
+        "period on a citation nobody can click to check"
+    )
+    misordered = [
+        line
+        for line in lines
+        if not (
+            max(g.left for g in line.publisher)
+            < line.separator.left
+            < min(g.left for g in line.url)
+        )
+    ]
+    assert not misordered, (
+        f"{len(misordered)} of {len(lines)} .refs__meta elements on {template_id} do not "
+        f"paint publisher, {SEPARATOR!r}, URL in that order across the line:\n"
+        f"{describe_lines(misordered)}\n"
+        "The container's direction: ltr is what fixes that order, and isolating the "
+        "publisher inside it must not have moved the separator or the URL"
     )

@@ -539,8 +539,50 @@ def make_brief(
 
 
 # --------------------------------------------------------------------------- #
+# Untyped JSON into the types the assertions are written against
+# --------------------------------------------------------------------------- #
+# Two sources of untyped JSON reach this module: a browser measurement, and
+# ``assets/panda/credits.json``. These four turn either into a type, so a shape that
+# changed under us fails here with the offending value rather than three lines later as a
+# confusing comparison.
+
+
+def _number(value: object) -> float:
+    assert isinstance(value, (int, float)), f"expected a number, measured {value!r}"
+    return float(value)
+
+
+def _text(value: object) -> str:
+    assert isinstance(value, str), f"expected text, measured {value!r}"
+    return value
+
+
+def _rows(value: object) -> Sequence[object]:
+    assert isinstance(value, list), f"expected a list, measured {value!r}"
+    return value
+
+
+def _fields(value: object) -> Mapping[str, object]:
+    assert isinstance(value, dict), f"expected an object, measured {value!r}"
+    return value
+
+
+# --------------------------------------------------------------------------- #
 # Panda fixtures with their real licences
 # --------------------------------------------------------------------------- #
+
+
+def _read_panda_credits() -> Mapping[str, Mapping[str, object]]:
+    """``assets/panda/credits.json`` by filename. The data is authoritative -- prose
+    about these licences drifts, and fences downstream need the real caption strings at
+    their real lengths, because legibility degrades as a caption wraps."""
+    raw: object = json.loads((PANDA_DIR / "credits.json").read_text(encoding="utf-8"))
+    return MappingProxyType(
+        {_text(_fields(entry)["filename"]): _fields(entry) for entry in _rows(raw)}
+    )
+
+
+PANDA_CREDITS: Final = _read_panda_credits()
 
 
 @dataclass(frozen=True, slots=True)
@@ -552,23 +594,38 @@ class PandaFixture:
     source_url: str
     alt_text: str
 
+    @property
+    def real_size(self) -> tuple[int, int]:
+        """The photograph's own pixel size, from ``credits.json`` rather than a literal.
+
+        Hard-coded defaults of ``1600x1066`` declared a 3:2 image for
+        ``giant-panda-eating-bamboo.jpg``, which is 1600x1600 on disk -- so every
+        geometry fence fed this fixture measured a distortion the pipeline cannot emit,
+        and ``cover``'s identity case was never tested on honest metadata."""
+        entry = PANDA_CREDITS[self.filename]
+        return int(_number(entry["width"])), int(_number(entry["height"]))
+
     def as_asset(
         self,
         role: ImageRole = ImageRole.SUPPORTING,
-        width_px: int = 1600,
-        height_px: int = 1066,
+        width_px: int | None = None,
+        height_px: int | None = None,
         *,
         modified: bool = False,
     ) -> ImageAsset:
         """``modified`` defaults to ``False`` to leave every existing caller alone,
         but the real ``assets/panda/credits.json`` sets it on all five files -- and it
         is the only thing that renders ``.credit__adapted``. A colophon fence built on
-        the default would measure a row the shipped pipeline never emits."""
+        the default would measure a row the shipped pipeline never emits.
+
+        ``width_px``/``height_px`` default to the file's real size and exist to let a
+        cell declare a *deliberate* lie, which is what the cover-crop fences need."""
+        real_width, real_height = self.real_size
         return ImageAsset(
             content=PANDA_DIR / self.filename,
             mime_type="image/jpeg",
-            width_px=width_px,
-            height_px=height_px,
+            width_px=real_width if width_px is None else width_px,
+            height_px=real_height if height_px is None else height_px,
             alt_text=self.alt_text,
             credit=ImageCredit(
                 license=self.license_text,
@@ -620,6 +677,38 @@ identically to a plain ``tuple(panda.as_asset() for panda in PANDAS)``. A lead a
 of some kind is what narrows the masthead into a ``46fr 54fr`` grid track, the only
 configuration where the ``--fit`` cap on the title binds -- and ``images=()`` is the
 only thing that flattens the masthead back out."""
+
+
+def test_the_panda_fixtures_declare_the_size_their_files_really_have() -> None:
+    """A fixture that declares a ratio its file does not have is a fence measuring a
+    distortion production cannot emit.
+
+    ``PANDA_SET`` declared 1600x1066 for all three for as long as ``as_asset`` had
+    literal defaults, and ``giant-panda-eating-bamboo.jpg`` is 1600x1600 -- so every
+    geometry cell fed this set asserted a 1.50 aspect over a square photograph, and
+    ``cover``'s identity case was never exercised on honest metadata. The sizes are
+    derived from ``credits.json`` now; this pins them there, because a literal default
+    is one edit away from coming back."""
+    declared = {
+        panda.filename: (asset.width_px, asset.height_px)
+        for panda, asset in zip(PANDAS, PANDA_SET, strict=True)
+    }
+    assert len(declared) == len(PANDA_SET), (
+        f"two fixtures share a filename, so this fence measures fewer than the "
+        f"{len(PANDA_SET)} assets in PANDA_SET: {declared}"
+    )
+    authoritative = {
+        name: (
+            int(_number(PANDA_CREDITS[name]["width"])),
+            int(_number(PANDA_CREDITS[name]["height"])),
+        )
+        for name in declared
+    }
+    assert declared == authoritative, (
+        f"PANDA_SET declares {declared} but assets/panda/credits.json holds "
+        f"{authoritative}. Any cell that reads an aspect ratio off this set is now "
+        "measuring a shape the imagery stage never produces"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -821,31 +910,6 @@ async def compose_cell(
         content,
         images,
     )
-
-
-# A browser measurement arrives as untyped JSON. These four turn it into the types the
-# assertions are written against, so a shape that changed under us fails here with the
-# offending value rather than three lines later as a confusing comparison.
-
-
-def _number(value: object) -> float:
-    assert isinstance(value, (int, float)), f"expected a number, measured {value!r}"
-    return float(value)
-
-
-def _text(value: object) -> str:
-    assert isinstance(value, str), f"expected text, measured {value!r}"
-    return value
-
-
-def _rows(value: object) -> Sequence[object]:
-    assert isinstance(value, list), f"expected a list, measured {value!r}"
-    return value
-
-
-def _fields(value: object) -> Mapping[str, object]:
-    assert isinstance(value, dict), f"expected an object, measured {value!r}"
-    return value
 
 
 # --------------------------------------------------------------------------- #
@@ -1076,7 +1140,7 @@ def inline_styles(parsed: ParsedHtml) -> tuple[str, ...]:
 
 MIN_SHOWN_URL_COPIES: Final = 3
 """Measured: every cell renders the URL exactly three times as visible text -- the
-bibliography's ``span.refs__meta``, the colophon's licence ``span.credit__url`` and its
+bibliography's ``span.refs__url``, the colophon's licence ``span.credit__url`` and its
 source ``span.credit__url``. The floor is the whole measured count rather than a
 fraction of it, because each of the three is a different code path in ``layout.py``
 (``_reference``, ``_credit``'s ``license_url``, ``_credit``'s ``source_url``) and losing
@@ -2141,9 +2205,14 @@ reader copies out of the PNG.
 The logical string is what the markup holds; the visual string is what the reader gets.
 On an LTR page they are always equal, which is why this fence runs RTL."""
 
-URL_SITES: Final = (".credit__url", ".refs__meta")
+URL_SITES: Final = (".credit__url", ".refs__url")
 """The two elements a reader is expected to copy by hand out of a PNG: the colophon's
-licence and source URIs, and the bibliography's reference URLs."""
+licence and source URIs, and the bibliography's reference URLs.
+
+``.refs__url`` and not its ``.refs__meta`` container: that line prints
+``publisher — url``, so the URL is one of two fields in it and the container's first
+child is the publisher. This fence walks character rects from the first text node, and a
+selector whose first child is an element measures nothing."""
 
 BIDI_NEUTRAL_TAIL: Final = "/"
 """The character that moves. A solidus has no strong direction of its own, so on an RTL
@@ -2152,7 +2221,7 @@ page it resolves to the paragraph's and jumps the run it was written after.
 Both sites have to *carry* one for a cell to be able to see the bug. The colophon does on
 real data -- three of the five fixture licence URIs end in a solidus -- but the reference
 URLs do not, so ``test_a_url_on_an_rtl_page_...`` supplies its own content rather than
-taking ``make_content()``'s. Measured: without that, the ``.refs__meta`` cells were green
+taking ``make_content()``'s. Measured: without that, the ``.refs__url`` cells were green
 before the fix and after it, which is a passing test that proves nothing."""
 
 
@@ -2883,7 +2952,7 @@ same page every assertion below is trying to reject."""
 
 MIN_EXAMINED_URI_ELEMENTS: Final = 6
 """Measured: 7 in all six cells of this fence -- the six ``span.credit__url`` the
-assertions below transcribe, plus the bibliography's single ``span.refs__meta``. The
+assertions below transcribe, plus the bibliography's single ``span.refs__url``. The
 floor sits at six because six is what the loop below names: a page that dropped the
 bibliography is still worth judging, and a page that dropped the colophon must not
 pass by having nothing left to uppercase."""
@@ -2982,14 +3051,17 @@ async def test_a_declared_aspect_ratio_governs_the_rendered_image(
     rendered at 0.951 and lost about 37% of itself. The two band images here have
     deliberately different ratios, so no single rendered height can satisfy both.
     """
-    # The explicit dimensions are the whole setup: as_asset() defaults every fixture
-    # to 1600x1066, which declares one ratio for all three and leaves the guard below
-    # nothing to compare. Both shapes also have to stay inside the layout's clamp
-    # band, or the clamp itself collapses them back to a single declared ratio.
+    # Two ratios in the band is the whole setup, and the fixtures now supply them
+    # without being told to: `giant-panda-portrait.jpg` is 1600x1066 and
+    # `giant-panda-eating-bamboo.jpg` is 1600x1600. These used to be hand-written
+    # overrides, restating one truthfully and correcting the other -- the guard on
+    # `declared_ratios` below is what keeps this honest if credits.json ever flattens
+    # the set to a single shape. Both shapes stay inside the layout's clamp band, or
+    # the clamp itself collapses them back to one declared ratio.
     images = (
         PANDAS[0].as_asset(role=ImageRole.HERO),
-        PANDAS[1].as_asset(width_px=1600, height_px=1066),
-        PANDAS[2].as_asset(width_px=1600, height_px=1600),
+        PANDAS[1].as_asset(),
+        PANDAS[2].as_asset(),
     )
     composition = await compose_cell(template_id, theme, make_content(), images)
 
@@ -4165,19 +4237,6 @@ other test modules iterate it, so this fence owns its own tuple rather than grow
 that one."""
 
 
-def _read_panda_credits() -> Mapping[str, Mapping[str, object]]:
-    """``assets/panda/credits.json`` by filename. The data is authoritative -- prose
-    about these licences drifts, and this fence needs the real caption strings at
-    their real lengths, because legibility degrades as a caption wraps."""
-    raw: object = json.loads((PANDA_DIR / "credits.json").read_text(encoding="utf-8"))
-    return MappingProxyType(
-        {_text(_fields(entry)["filename"]): _fields(entry) for entry in _rows(raw)}
-    )
-
-
-PANDA_CREDITS: Final = _read_panda_credits()
-
-
 def real_hero(filename: str) -> ImageAsset:
     """A hero asset built from ``credits.json``, so the caption the browser lays out
     is the string the real pipeline produces at the length it produces it."""
@@ -4608,6 +4667,33 @@ def _selector_count(css: str, selector: str) -> int:
     return len(re.findall(re.escape(selector) + r"\s*[,{]", css))
 
 
+def _rule_body(css: str, selector: str) -> str:
+    """The declarations inside ``selector``'s block, found by counting braces.
+
+    A sheet-wide ``declaration in css`` cannot see which rule owns the
+    declaration, and every body sheet now declares ``object-fit: cover`` twice --
+    once on its hero and once on its photo grid -- so the hero's copy could be
+    deleted with the substring still present. Scoping to the block is what makes
+    the assertion falsifiable.
+
+    Depth counting, not ``[^{}]*``: these sheets are Jinja templates, and a body
+    that interpolates ``{{ ... }}`` would truncate that pattern at the first
+    brace. Every Jinja delimiter is balanced, so ``{{``/``}}`` and ``{%``/``%}``
+    cancel and the depth is unaffected.
+    """
+    openings = list(re.finditer(re.escape(selector) + r"\s*\{", css))
+    assert len(openings) == 1, (
+        f"expected exactly one `{selector}` block, found {len(openings)}"
+    )
+    opened = openings[0].end() - 1
+    depth = 0
+    for index in range(opened, len(css)):
+        depth += (css[index] == "{") - (css[index] == "}")
+        if depth == 0:
+            return css[opened + 1 : index]
+    raise AssertionError(f"`{selector}` is never closed")
+
+
 def test_the_hero_scrim_is_declared_once_in_the_chrome() -> None:
     """``.hero__credit`` used to be three character-identical blocks, one per body
     sheet, and the contrast bug was three copies deep. It now lives once in
@@ -4649,10 +4735,10 @@ def test_the_hero_crop_stays_per_body() -> None:
             f"{sheet} no longer declares its own .hero img rule; the crop is per-body "
             "on purpose"
         )
-        assert "object-fit: cover" in css, (
-            f"{sheet} declares .hero img but has stopped cropping with "
-            "object-fit: cover, so the readback's cover reconstruction no longer "
-            "models what the page paints"
+        assert "object-fit: cover" in _rule_body(css, ".hero img"), (
+            f"{sheet}'s .hero img rule has stopped cropping with object-fit: cover, "
+            "so the readback's cover reconstruction no longer models what the page "
+            "paints. The sheet's other copy on its photo grid does not crop the hero"
         )
     assert _selector_count(sheet_declarations(CHROME_SHEET), ".hero img") == 0, (
         f"{CHROME_SHEET} has taken over .hero img. Hoisting the crop is a separate "

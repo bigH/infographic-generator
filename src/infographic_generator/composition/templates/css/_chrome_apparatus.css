@@ -23,35 +23,60 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
   /* The reference's *title* is a bare text node in this `<li>`, so this is the only
-     rule that can protect it -- `.refs__meta` below covers the URL and nothing else.
+     rule that can protect it -- `.refs__meta` and its two spans below cover the
+     publisher-and-URL line beneath the title, not the title itself.
      `plaintext` and not `direction: ltr`, because a title is prose in whatever script
      it was published in; the page's bidi idiom, argued at `_chrome.css`'s `.tick`. */
   unicode-bidi: plaintext;
 }
-/* `unicode-bidi` and `direction` are a security control, not typography. A URL is
-   an LTR string, and on an RTL page its bidi-neutral trailing characters resolve to
-   the paragraph direction: measured in chromium, `https://.../by/2.0/` renders as
-   `/https://.../by/2.0` -- the solidus relocated to the front. A reference is there
-   to be checked and a licence URI to be retyped, so a URL that reads differently
-   from the one that was published is the whole failure. `isolate` also gives the
-   element its own bidi paragraph, which is what stops an unterminated isolate
-   initiator inside a researched title from re-ordering the URL beside it: the
-   Trojan Source bibliography spoof. `display: block` happens to do that too, so
-   deleting it must not be able to reopen this.
+/* `unicode-bidi` and `direction` are a security control, not typography -- and this
+   line holds *two* fields with opposite needs: `_base.html.j2` prints
+   `publisher — url`. So the container carries the typography, and each field carries
+   its own base direction.
 
-   `direction: ltr` is right *here* and in `.credit__url`, and nowhere else on the page,
-   because those two elements hold a URL and nothing but a URL -- the one field whose
-   direction is a fact rather than a guess. Every other scraped field uses
-   `unicode-bidi: plaintext` instead; the measurements that separate them are at
-   `_chrome.css`'s `.tick`. Do not "unify" the two.
+   A URL is an LTR string, and on an RTL page its bidi-neutral trailing characters
+   resolve to the paragraph direction: measured in chromium, `https://.../by/2.0/`
+   renders as `/https://.../by/2.0` -- the solidus relocated to the front. A reference
+   is there to be checked and a licence URI to be retyped, so a URL that reads
+   differently from the one that was published is the whole failure. That direction is
+   a *fact* about the content, which is why `.refs__url` and `.credit__url`, and
+   nothing else on the page, assert `direction: ltr`. Do not "unify" them with the rest.
 
-   Still open, and not fixed by either declaration: this element holds the publisher
-   *and* the URL, and `_legible_text` deliberately keeps U+2066-U+2069 in prose. An
-   unterminated initiator in the publisher therefore reorders the URL beside it inside
-   this element's own bidi paragraph -- `isolate` defends against a neighbour, not
-   against yourself. Measured identical under every variant tried. The fix is markup or
-   a wider sanitiser on a publisher that shares an element with a URL, not another
-   declaration here. */
+   A publisher's direction is a guess -- prose in whatever script it was published in
+   -- so it takes the page's idiom for scraped text, `unicode-bidi: plaintext`, argued
+   with its measurements at `_chrome.css`'s `.tick`. It used to share this container's
+   paragraph and be governed by the URL's `direction: ltr`, which broke it the same
+   way, mirrored: an Arabic publisher's trailing full stop is neutral between its own
+   run and the Latin URL after it, so it resolved to LTR and painted at the run's
+   *right*, read first instead of last. Measured at `ar-EG`, width 1200, on the Arabic
+   publishers in `tests/test_visual_order.py`: the stop painted at x=716.05 with its
+   own letters at x=621..709.73; inside the span it sits at x=621, left of letters at
+   x=627.30..716.03. Coordinates rather than the string itself, which is Arabic and
+   would re-order this comment around itself.
+
+   The container keeps `direction: ltr` for what is left in it: the ` — ` separator
+   between two isolated spans, and the inline order of those spans. Both belong to the
+   URL's line, and the split moved neither -- measured on an LTR page against the
+   single mixed span it replaced, the em dash (x=160.72, width 6.84) and every
+   publisher glyph land on the same x to four decimals, and of 210 characters the
+   largest move was 0.031px, every one of them inside the URL.
+
+   `isolate` on all three. On the container it gives the element its own bidi
+   paragraph, which is what stops an unterminated isolate initiator inside a researched
+   *title* -- the bare text node in the `<li>` above -- from re-ordering this whole
+   line: the Trojan Source bibliography spoof. `display: block` happens to do that too,
+   so deleting it must not be able to reopen this. `_legible_text` deliberately keeps
+   U+2066-U+2069, so that initiator does reach the DOM.
+
+   Splitting the fields closed the same spoof one field in: before it, a publisher
+   ending in U+2067 flung the separator from x=709.72 to x=900.83, past the whole URL,
+   so `example.com.<U+2067>—https://...` painted as
+   `example.com.<U+2067>https://...—`. Each field being its own isolate confines that
+   now. Still open, and no declaration here can close it: an initiator in the *middle*
+   of a publisher re-orders the rest of *that publisher* -- `example<U+2067>.com.`
+   paints its first stop at x=696.09, right of the `m` at x=689.25. `isolate` defends
+   against a neighbour, not against yourself, and that one wants a wider sanitiser
+   rather than more CSS. */
 .refs__meta {
   display: block;
   unicode-bidi: isolate;
@@ -63,6 +88,8 @@
   margin-top: 3px;
   overflow-wrap: anywhere;
 }
+.refs__publisher { unicode-bidi: plaintext; }
+.refs__url { unicode-bidi: isolate; direction: ltr; }
 
 /* --- colophon ------------------------------------------------------- */
 /* Legally load-bearing: this is where CC BY / BY-SA attribution is discharged,
@@ -134,7 +161,7 @@
 }
 /* text-transform is inherited, and a licence URI has to be transcribed by hand
    out of the PNG -- uppercasing it would break it. `unicode-bidi`/`direction` for
-   the same reason and on the same evidence as `.refs__meta` above: this is the
+   the same reason and on the same evidence as `.refs__url` above: this is the
    element the colophon exists for. */
 .credit__url {
   display: block;

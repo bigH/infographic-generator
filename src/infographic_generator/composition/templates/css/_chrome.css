@@ -103,12 +103,14 @@ li { list-style: none; }
    docstring that it does so because this rule set no `overflow-wrap`. It now does, so
    that cap is free to be a cap about publishers rather than about this file.
 
-   `unicode-bidi: plaintext` is this page's bidi idiom for scraped text, and twelve other
-   rules carry it with a pointer back here: `.hero__credit` below, `.row__value`,
+   `unicode-bidi: plaintext` is this page's bidi idiom for scraped text, and every other
+   rule that carries it points back here: `.hero__credit` below, `.row__value`,
    `.chip__value`, `.rank__value`, `.band figcaption` and both `.plates figcaption`s,
-   `.refs li`, and the four `.credit__*` rules. It is a security control on the same
+   `.refs li`, `.refs__publisher`, and the four `.credit__*` rules. Named rather than
+   counted, because the population has grown twice and a tally here rotted both times.
+   It is a security control on the same
    evidence as
-   `_chrome_apparatus.css`'s `.refs__meta`, and it is deliberately *not* the same
+   `_chrome_apparatus.css`'s `.refs__url`, and it is deliberately *not* the same
    declaration. On an RTL page a bidi-neutral character at the edge of an LTR run
    resolves to the paragraph direction and relocates: measured at `ar-EG`, the value
    `26-84 lb (12-38 kg)` painted as `lb (12-38 kg) 26-84`, and 44 of 75 elements across
@@ -138,9 +140,11 @@ li { list-style: none; }
    carrying `plaintext` while the block keeps its alignment -- not `direction`.
 
    Note when reading a fence over this: `<p>`, `<li>` and `<figcaption>` already compute
-   `isolate` from the UA sheet, so 10 of these 13 rules look half-protected with the
-   declarations deleted. The three that do not are the bare `<span>`s in the colophon,
-   and they were the worst offenders measured. So a fence phrased as "these elements are
+   `isolate` from the UA sheet, so most of these rules look half-protected with the
+   declarations deleted. The ones that do not are the bare `<span>`s -- the three in the
+   colophon and `.refs__publisher` -- and they were the worst offenders measured. Ten of
+   the fourteen at the last count, but the ratio is the point and the tally is not: read
+   it off the sheets. So a fence phrased as "these elements are
    isolated" passes with the fix removed; only paint order under an RTL paragraph
    actually moves. */
 .tick {
@@ -171,15 +175,24 @@ li { list-style: none; }
    second answer. Those two re-declare this whole expression to reach it, which is
    now a restatement rather than a correction -- see the comments there.
 
-   The floor cannot cost a layout anything above the page's real narrow limit, which
-   is 452px, pinned to the pixel: 450 and 451 overflow, 452 and 453 do not, driven by
-   `_chrome_apparatus.css`'s `.credits` track minimum of 420px plus a 32px gutter. At
-   452 and above `min(--size, --fit)` is far over 19px on every content set, so this
-   term binds only below a width the page already cannot lay out -- where a title
-   that wraps at 19px is the better failure. And it does wrap rather than spill:
-   `.title` carries `overflow-wrap: anywhere` below. (There is no separate legibility
-   floor around 560px; that was measured and refuted -- at 480, 560 and 564 nothing
-   overflows and the smallest type on the page is 10.50px.) */
+   The page's real narrow limit is 452px, pinned to the pixel: 450 and 451 overflow,
+   452 and 453 do not, in all three bodies, driven by `_chrome_apparatus.css`'s
+   `.credits` track minimum of 420px plus a 32px gutter. This term is *not* free above
+   that, which is what this paragraph used to claim. Measured with the `max()` deleted
+   in a scratch copy of the page, on the shipped `assets/panda/facts.json`: the floor
+   binds throughout 452-583, in `stat_grid`, on a display *value* rather than the
+   title. `1/900th of its mother` sets at 14.13px at 452, 18.34 at 564 and 18.86 at
+   580; `26-84 lb (12-38 kg)` is under 19px too up to about 520. 584 is the first
+   width where `min(--size, --fit)` clears 19px unaided, and from there to 1200
+   nothing binds. Which content set is measured decides the answer, and the real one
+   is the one that binds: `process_flow` and `ranked_list` on the same facts clear the
+   floor at every width from 400 up (smallest 27.00px), and the short-valued ten-fact
+   test fixture clears it in all three bodies (smallest 27.00-46.35px), which is how
+   the old claim survived. Below 452 the floor is what stops the collapse to 0.00px,
+   and a title that wraps at 19px is the better failure. And it does wrap rather than
+   spill: `.title` carries `overflow-wrap: anywhere` below. (There is no separate
+   legibility floor around 560px; that was measured and refuted -- at 480, 560 and
+   564 nothing overflows and the smallest type on the page is 10.50px.) */
 .fitted { font-size: max(19px, min(var(--size), var(--fit))); }
 
 /* The display face defaults to old-style figures, which at 100px reads as a row
@@ -297,11 +310,27 @@ li { list-style: none; }
   text-align: end;
   text-wrap: balance;
   overflow-wrap: anywhere;
-  /* The page's bidi idiom -- see `.tick` above. This is the rule where its alignment
-     cost is visible, because it is the only one of the eleven that sets `text-align`:
+  /* The page's bidi idiom -- see `.tick` above. `text-align` is where its alignment
+     cost lands, and this is the only rule in that family that declares one itself:
      chromium resolves `end` against the content-derived direction, so on an RTL page a
      caption beginning in English moves from flush left to flush right -- the edge that
      Latin text should sit on. Measured: first ink 16.00 in a 16.00-632.00 content box
-     before, 22.16 with no gap at the right after. An Arabic caption does not move. */
+     before, 22.16 with no gap at the right after. An Arabic caption does not move.
+
+     Declaring one is not the only way to have one, and the cost is not confined here:
+     `text-align` inherits. `.rank__value` sets none and inherits `end` from
+     `.rank__figure` (`ranked_list.css`), where the same re-resolution pushed each
+     ranked figure to the right of a box it does not fill, making its ink-left a
+     function of its own text width. Measured at `ar-EG` on the ten-fact fixture, first
+     ink per rank went 72.00 x10 to 331.56 / 408.95 / 435.72 / 457.50 / 472.67 x6 at
+     1200px, and 38.00 x10 to 375.81 / 453.20 / 479.97 / 501.75 / 516.92 x6 at 640px --
+     the ladder's flush edge, gone in both of that body's grid regimes. It is pinned
+     back there by `[dir="rtl"] .rank__figure { text-align: left }`, argued beside it.
+
+     `.row__value` and `.chip__value` inherit nothing either way, so they compute the
+     initial `start` and every one of them lands exactly on the leading edge of its own
+     box: measured at `ar-EG`, ink-left equals the container's own left edge to 0.00px
+     on all of them, at 1200px and 640px. They move together and stay mutually flush,
+     which is the ragged-not-wrong case `.tick` above documents and accepts. */
   unicode-bidi: plaintext;
 }
